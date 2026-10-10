@@ -1,4 +1,4 @@
-name: Valepólis V0.3.0 — PRE-FLIGHT e APK Android (Relevo próprio)
+name: Valepólis V0.3.0 — PRE-FLIGHT e APK Android sem assinatura oficial
 
 on:
   workflow_dispatch:
@@ -17,11 +17,11 @@ concurrency:
 
 env:
   GODOT_VERSION: '4.5-stable'
-  APK_NAME: 'Quando-Toca-a-Sirene-V0.3.0.apk'
+  APK_NAME: 'Quando-Toca-a-Sirene-V0.3.0-DEBUG.apk'
 
 jobs:
   build:
-    name: Auditar, testar e exportar APK assinada com chave GitHub
+    name: Auditar, testar e exportar APK Android de teste sem keystore oficial
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -75,6 +75,35 @@ jobs:
           test -f "$PROJECT_DIR/main.gd"
           test -f "$PROJECT_DIR/export_presets.cfg"
 
+      - name: Desativar plugin de editor Terrain3D apenas no runner CI
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYPLUGIN'
+          from pathlib import Path
+          import re
+          p = Path("project.godot")
+          content = p.read_text(encoding="utf-8")
+          pattern = re.compile(r"(?ms)^\[editor_plugins\][ \t]*\n(.*?)(?=^\[|\Z)")
+          match = pattern.search(content)
+          if not match:
+              content = content.rstrip() + '\n\n[editor_plugins]\nenabled=PackedStringArray()\n'
+          else:
+              section = match.group(1)
+              if not re.search(r"(?m)^enabled\s*=", section):
+                  new_section = section.rstrip() + '\nenabled=PackedStringArray()\n'
+              else:
+                  new_section = re.sub(r"(?m)^enabled\s*=.*$", "enabled=PackedStringArray()", section)
+              content = content[:match.start(1)] + new_section + content[match.end(1):]
+          p.write_text(content, encoding="utf-8")
+          check = p.read_text(encoding="utf-8")
+          if not re.search(r"(?ms)^\[editor_plugins\]\s*\nenabled=PackedStringArray\(\)", check):
+              raise SystemExit("Não foi possível desativar o plugin de editor no runner.")
+          print("CI_EDITOR_PLUGIN_DISABLED=Terrain3D")
+          print("INFO|A extensão nativa Terrain3D e os seus binários não foram removidos.")
+          PYPLUGIN
+
       - name: Configurar Java 17
         uses: actions/setup-java@v5
         with:
@@ -126,39 +155,6 @@ jobs:
           adb start-server
           adb devices -l
 
-      - name: Preparar assinatura oficial via GitHub Secrets
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build
-          for secret_name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [ -z "${!secret_name:-}" ]; then
-              echo "FAIL|GitHub Secret obrigatório ausente: ${secret_name}" | tee -a build/preflight-v0.3.0.txt
-              exit 1
-            fi
-          done
-          KEYSTORE_PATH="$RUNNER_TEMP/valepolis-release.keystore"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          test -s "$KEYSTORE_PATH"
-          # O preset Android do Godot usa uma password para assinar.
-          # Exigimos que as duas passwords coincidam; não alteramos a chave original.
-          if [ "$ANDROID_KEYSTORE_PASSWORD" != "$ANDROID_KEY_PASSWORD" ]; then
-            echo 'FAIL|Godot Android requer passwords iguais para keystore e chave neste preset.' | tee -a build/preflight-v0.3.0.txt
-            exit 1
-          fi
-          # Atualiza exclusivamente as opções de assinatura do preset Android.
-          sed -i "s|^keystore/release=.*|keystore/release=\"$KEYSTORE_PATH\"|" export_presets.cfg
-          sed -i "s|^keystore/release_user=.*|keystore/release_user=\"$ANDROID_KEY_ALIAS\"|" export_presets.cfg
-          # Evita gravar a palavra-passe no ficheiro de configuração do projeto.
-          sed -i 's|^keystore/release_password=.*|keystore/release_password=\"\"|' export_presets.cfg
-          echo 'PASS|Assinatura configurada a partir dos quatro GitHub Secrets; nenhuma chave temporária criada.' >> build/preflight-v0.3.0.txt
-
       - name: PRE-FLIGHT estático do projeto
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -174,25 +170,7 @@ jobs:
             exit 1
           fi
 
-      - name: Evitar bloqueio de plugins de editor no runner CI
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Alteração apenas no checkout efémero do runner; o projeto entregue mantém os plugins ativos.
-          python3 - <<'PYCODE'
-          from pathlib import Path
-          import re
-          path = Path("project.godot")
-          text = path.read_text(encoding="utf-8")
-          pattern = r'(?ms)^\[editor_plugins\]\s*\nenabled=.*?(?=^\[|\Z)'
-          if re.search(pattern, text):
-              text = re.sub(pattern, '[editor_plugins]\nenabled=PackedStringArray()\n\n', text, count=1)
-          path.write_text(text, encoding="utf-8")
-          print("CI_EDITOR_PLUGINS_DISABLED=1")
-          PYCODE
-
-      - name: Importar recursos Godot (sem ferramentas 3D externas)
+      - name: Importar recursos nativos Godot
         id: godot_import
         working-directory: ${{ env.PROJECT_DIR }}
         timeout-minutes: 8
@@ -201,50 +179,70 @@ jobs:
           set -uo pipefail
           mkdir -p build
           LOG="build-godot-import.log"
+          echo "INFO|Início da importação de recursos nativos Godot: $(date -Is)" | tee "$LOG"
+          echo "INFO|Godot: $(godot --version 2>&1)" | tee -a "$LOG"
           set +e
-          timeout --verbose --signal=TERM --kill-after=20s 7m godot --headless --editor --path . --import 2>&1 | tee "$LOG"
+          timeout --verbose --signal=TERM --kill-after=20s 7m \
+            godot --headless --editor --path . --import --verbose 2>&1 | tee -a "$LOG"
           status=${PIPESTATUS[0]}
           set -e
           echo "INFO|Código de saída da importação Godot: $status" | tee -a "$LOG"
           if [ "$status" -ne 0 ] || grep -Eiq 'SCRIPT ERROR:|Parse Error:|(^|[[:space:]])ERROR:' "$LOG"; then
-            echo 'FAIL|Importação Godot registou erros no log.' | tee -a build/preflight-v0.3.0.txt
-            tail -n 100 "$LOG" || true
+            echo 'FAIL|Importação Godot de recursos do projeto falhou ou registou erros.' | tee -a build/preflight-v0.3.0.txt
             exit 1
           fi
           echo 'PASS|Importação e análise dos scripts Godot' | tee -a build/preflight-v0.3.0.txt
 
-      - name: Validar addon próprio de relevo Valepólis
-        id: valepolis_terrain_gate
+      - name: Gerar dados persistentes Terrain3D de Valepólis
+        id: terrain3d_data
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-          test -f addons/valepolis_terrain/plugin.cfg
-          test -f addons/valepolis_terrain/terrain_generator.gd
-          if ! godot --headless --path . --script tools/preflight_valepolis_terrain.gd 2>&1 | tee build-valepolis-terrain.log; then
-            echo 'FAIL|Addon próprio de relevo Valepólis' | tee -a build/preflight-v0.3.0.txt
-            exit 1
-          fi
-          grep -q '^VALEPOLIS_TERRAIN_PASS=vertices:[0-9][0-9]*,surfaces:[0-9][0-9]*,collision=ready$' build-valepolis-terrain.log
-          echo 'PASS|Addon próprio de relevo Valepólis' | tee -a build/preflight-v0.3.0.txt
+          test -f terrain/valepolis_heightmap.png
+          godot --headless --path . --script tools/generate_terrain3d_data.gd 2>&1 | tee build-terrain3d-data-generation.log
+          grep -q '^TERRAIN3D_DATA_GENERATED=' build-terrain3d-data-generation.log
+          test -d terrain/ValepolisTerrainData
+          test -n "$(find terrain/ValepolisTerrainData -type f -print -quit)"
+          echo 'PASS|Dados persistentes Terrain3D gerados a partir do heightmap procedural de Valepólis.' | tee -a build/preflight-v0.3.0.txt
 
-      - name: Gerar recursos 3D automaticamente no Godot
-        id: native_3d_assets
+      - name: Verificar integração real do Terrain3D
+        id: terrain3d_gate
         working-directory: ${{ env.PROJECT_DIR }}
-        timeout-minutes: 4
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build
-          test -f addons/valepolis_3d_studio/procedural_character.gd
-          test -f addons/valepolis_3d_studio/asset_generator.gd
-          if ! godot --headless --path . --script addons/valepolis_3d_studio/asset_generator.gd 2>&1 | tee build-native-3d-assets.log; then
-            echo 'FAIL|Geração procedural nativa 3D' | tee -a build/preflight-v0.3.0.txt
+          if [ ! -f tools/preflight_terrain3d.gd ]; then
+            echo 'FAIL|Teste runtime Terrain3D ausente' | tee -a build/preflight-v0.3.0.txt
             exit 1
           fi
-          grep -q '^VALEPOLIS_NATIVE_3D_PASS=generated:10$' build-native-3d-assets.log
-          test "$(find assets/generated_3d -maxdepth 1 -type f -name '*.tscn' | wc -l)" -ge 10
-          echo 'PASS|Geração procedural nativa de personagens e edifícios' | tee -a build/preflight-v0.3.0.txt
+          if ! godot --headless --path . --script tools/preflight_terrain3d.gd 2>&1 | tee build-terrain3d-runtime.log; then
+            echo 'FAIL|Teste runtime Terrain3D' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          if grep -Eiq '(^|[[:space:]])ERROR:|SCRIPT ERROR:|Parse Error:' build-terrain3d-runtime.log; then
+            echo 'FAIL|Terrain3D runtime registou erros, mesmo que o processo tenha terminado com código 0.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          grep -q '^TERRAIN3D_RUNTIME_PASS=regions:[0-9][0-9]*,camera=assigned$' build-terrain3d-runtime.log || { echo 'FAIL|Terrain3D runtime não confirmou regiões e câmara atribuída' | tee -a build/preflight-v0.3.0.txt; exit 1; }
+          echo 'PASS|Teste runtime Terrain3D: regiões e câmara atribuída, sem erros no log' | tee -a build/preflight-v0.3.0.txt
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import re, sys
+          root = Path('.')
+          scene = (root / 'City3D.tscn').read_text(encoding='utf-8', errors='replace') if (root / 'City3D.tscn').is_file() else ''
+          gd = '\n'.join(p.read_text(encoding='utf-8', errors='replace') for p in root.rglob('*.gd') if 'addons/terrain_3d/' not in p.as_posix())
+          has_node = bool(re.search(r'\[node[^\]]+type="Terrain3D"', scene)) or bool(re.search(r'ClassDB\.class_exists\("Terrain3D"\)', gd) and re.search(r'ClassDB\.instantiate\("Terrain3D"\)', gd))
+          data_files = [p for p in root.rglob('*') if p.is_file() and ('terrain' in p.as_posix().lower() or 'heightmap' in p.as_posix().lower()) and p.suffix.lower() in {'.res','.tres','.exr','.png','.raw','.r16','.tif','.tiff'} and 'addons/terrain_3d/' not in p.as_posix()]
+          if not has_node:
+              print('FAIL|Terrain3D: não existe nó Terrain3D na cena nem criação runtime detetável')
+              sys.exit(1)
+          if not data_files:
+              print('FAIL|Terrain3D: não foram encontrados dados persistentes de terreno fora do addon')
+              sys.exit(1)
+          print(f'PASS|Terrain3D: nó/configuração detetável e {len(data_files)} ficheiros candidatos a dados')
+          PYCODE
+          echo 'PASS|Verificação estrutural Terrain3D' | tee -a build/preflight-v0.3.0.txt
 
       - name: Executar testes funcionais V0.3.0
         id: functional
@@ -263,28 +261,40 @@ jobs:
           fi
           echo 'PASS|Testes funcionais V0.3.0' | tee -a build/preflight-v0.3.0.txt
 
-      - name: Exportar APK Android assinada com chave GitHub
+      - name: Exportar APK Android de validação (sem secrets)
         id: export_apk
         working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        timeout-minutes: 17
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build
-          : "${ANDROID_KEYSTORE_PASSWORD:?GitHub Secret ANDROID_KEYSTORE_PASSWORD ausente}"
-          : "${ANDROID_KEY_PASSWORD:?GitHub Secret ANDROID_KEY_PASSWORD ausente}"
-          # A password do keystore é o campo aceite pelo preset Android do Godot.
-          sed -i "s|^keystore/release_password=.*|keystore/release_password=\"$ANDROID_KEYSTORE_PASSWORD\"|" export_presets.cfg
-          godot --headless --path . --export-release 'Android' "build/${APK_NAME}" 2>&1 | tee godot-export.log
+          LOG="godot-export.log"
+          echo "INFO|Início da exportação Android: $(date -Is)" | tee "$LOG"
+          echo "INFO|Godot: $(godot --version 2>&1)" | tee -a "$LOG"
+          echo "INFO|Preset: Android; modo: debug; destino: build/${APK_NAME}" | tee -a "$LOG"
+          set +e
+          timeout --verbose --signal=TERM --kill-after=30s 15m \
+            godot --headless --path . --export-debug 'Android' "build/${APK_NAME}" --verbose 2>&1 | tee -a "$LOG"
           export_status=${PIPESTATUS[0]}
-          sed -i 's|^keystore/release_password=.*|keystore/release_password=""|' export_presets.cfg
-          if [ "$export_status" -ne 0 ]; then exit "$export_status"; fi
-          test -s "build/${APK_NAME}"
-          echo 'PASS|Exportação da APK com assinatura GitHub' | tee -a build/preflight-v0.3.0.txt
+          set -e
+          echo "INFO|Código de saída da exportação: $export_status" | tee -a "$LOG"
+          echo "INFO|Fim da exportação: $(date -Is)" | tee -a "$LOG"
+          if [ "$export_status" -eq 124 ] || [ "$export_status" -eq 137 ]; then
+            echo 'FAIL|Exportação Android excedeu 15 minutos; consultar godot-export.log.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          if [ "$export_status" -ne 0 ]; then
+            echo "FAIL|Exportação Android terminou com código $export_status; consultar godot-export.log." | tee -a build/preflight-v0.3.0.txt
+            exit "$export_status"
+          fi
+          if [ ! -s "build/${APK_NAME}" ]; then
+            echo 'FAIL|Godot terminou sem erro, mas a APK não existe ou está vazia.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          echo 'PASS|Exportação da APK Android de validação (debug)' | tee -a build/preflight-v0.3.0.txt
 
-      - name: Verificar alinhamento, assinatura e hash da APK
+      - name: Verificar alinhamento, assinatura debug e hash da APK
         id: verify_apk
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -293,7 +303,7 @@ jobs:
           zipalign -c -v 4 "build/${APK_NAME}"
           apksigner verify --verbose "build/${APK_NAME}"
           sha256sum "build/${APK_NAME}" > "build/${APK_NAME}.sha256"
-          echo 'PASS|Verificação de alinhamento e assinatura da APK' | tee -a build/preflight-v0.3.0.txt
+          echo 'PASS|Verificação de alinhamento e assinatura debug da APK' | tee -a build/preflight-v0.3.0.txt
 
       - name: Finalizar relatório PRE-FLIGHT
         if: always()
@@ -311,11 +321,10 @@ jobs:
             if ! grep -q '^FAIL|' "$REPORT"; then echo 'FAIL|Workflow terminou com falha antes da conclusão de todos os gates.' >> "$REPORT"; fi
             result=FAIL
           elif ! grep -q '^PASS|Importação e análise dos scripts Godot$' "$REPORT" || \
-               ! grep -q '^PASS|Addon próprio de relevo Valepólis$' "$REPORT" || \
-               ! grep -q '^PASS|Geração procedural nativa de personagens e edifícios$' "$REPORT" || \
+               ! grep -q '^PASS|Verificação estrutural Terrain3D$' "$REPORT" || \
                ! grep -q '^PASS|Testes funcionais V0.3.0$' "$REPORT" || \
-               ! grep -q '^PASS|Exportação da APK com assinatura GitHub$' "$REPORT" || \
-               ! grep -q '^PASS|Verificação de alinhamento e assinatura da APK$' "$REPORT"; then
+               ! grep -q '^PASS|Exportação da APK Android de validação (debug)$' "$REPORT" || \
+               ! grep -q '^PASS|Verificação de alinhamento e assinatura debug da APK$' "$REPORT"; then
             echo 'INCOMPLETE|Falta confirmação de um ou mais gates obrigatórios.' >> "$REPORT"
             result=INCOMPLETE
           else
@@ -339,8 +348,8 @@ jobs:
             ${{ env.PROJECT_DIR }}/build/preflight-v0.3.0.txt
             ${{ env.PROJECT_DIR }}/build-godot-import.log
             ${{ env.PROJECT_DIR }}/build-functional.log
-            ${{ env.PROJECT_DIR }}/build-valepolis-terrain.log
-            
+            ${{ env.PROJECT_DIR }}/build-terrain3d-runtime.log
+            ${{ env.PROJECT_DIR }}/build-terrain3d-data-generation.log
             ${{ env.PROJECT_DIR }}/godot-export.log
           if-no-files-found: warn
           retention-days: 14
@@ -363,7 +372,7 @@ jobs:
         run: |
           set -euo pipefail
           zip -qr "$RUNNER_TEMP/Valepolis-V0.3.0-Projeto-Completo-Validado.zip" . \
-            -x './.git/*' './.godot/*' './build/*' './*.log' './addons/valepolis_3d_studio/__pycache__/*'
+            -x './.git/*' './.godot/*' './build/*' './*.log'
 
       - name: Publicar ZIP completo do projeto
         if: success() && steps.verify_apk.outcome == 'success'
