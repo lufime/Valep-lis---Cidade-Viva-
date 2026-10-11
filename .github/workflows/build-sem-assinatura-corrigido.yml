@@ -21,7 +21,7 @@ env:
 
 jobs:
   build:
-    name: Auditar, testar e exportar APK assinada com chave GitHub
+    name: Auditar, testar e exportar APK de teste (chave temporária)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -36,16 +36,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/valepolis-project"
           PROJECT_FILE=""
-
-          # Aceita projeto na raiz ou dentro de uma pasta extraída.
           if [ -f "project.godot" ]; then
             PROJECT_FILE="$PWD/project.godot"
           else
             PROJECT_FILE="$(find . -path './.git' -prune -o -path './build' -prune -o -type f -name project.godot -print -quit)"
           fi
-
-          # Não escolher silenciosamente um ZIP arbitrário. Se houver ZIPs, exige
-          # exatamente um ZIP que contenha project.godot; assim não testa versões antigas.
           if [ -z "$PROJECT_FILE" ]; then
             mapfile -t candidates < <(find . -path './.git' -prune -o -path './build' -prune -o -type f -iname '*.zip' -print | while IFS= read -r z; do
               if unzip -Z1 "$z" 2>/dev/null | grep -Eq '(^|/)project\.godot$'; then printf '%s\n' "$z"; fi
@@ -60,15 +55,11 @@ jobs:
             unzip -q "$candidate" -d "$RUNNER_TEMP/valepolis-project"
             PROJECT_FILE="$(find "$RUNNER_TEMP/valepolis-project" -type f -name project.godot -print -quit)"
           fi
-
           if [ -z "$PROJECT_FILE" ] || [ ! -f "$PROJECT_FILE" ]; then
             echo 'ERRO: não foi encontrado project.godot nem ZIP contendo project.godot.'
-            echo 'Coloca o projeto extraído no repositório ou inclui o ZIP completo do projeto.'
             exit 1
           fi
-
-          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
-          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+          PROJECT_DIR="$(realpath "$(dirname "$PROJECT_FILE")")"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Projeto selecionado: $PROJECT_DIR"
           test -f "$PROJECT_DIR/Main.tscn"
@@ -92,7 +83,6 @@ jobs:
           test -n "$GODOT_BIN"
           chmod +x "$GODOT_BIN"
           sudo install "$GODOT_BIN" /usr/local/bin/godot
-
           curl -fL "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" -o "$RUNNER_TEMP/godot/templates.tpz"
           mkdir -p "$RUNNER_TEMP/godot/templates-unpacked"
           unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates-unpacked"
@@ -121,43 +111,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A exportação não requer um telefone ligado; iniciar o servidor evita
-          # a falha de ligação a tcp:5037 quando as ferramentas Android o consultam.
           adb start-server
           adb devices -l
 
-      - name: Preparar assinatura oficial via GitHub Secrets
+      - name: Preparar assinatura temporária da APK de teste (sem GitHub Secrets)
         working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build
-          for secret_name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [ -z "${!secret_name:-}" ]; then
-              echo "FAIL|GitHub Secret obrigatório ausente: ${secret_name}" | tee -a build/preflight-v0.3.0.txt
-              exit 1
-            fi
-          done
-          KEYSTORE_PATH="$RUNNER_TEMP/valepolis-release.keystore"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          KEYSTORE_PATH="$RUNNER_TEMP/valepolis-test.keystore"
+          KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          KEY_ALIAS="valepolis-test"
+          keytool -genkeypair -noprompt \
+            -keystore "$KEYSTORE_PATH" \
+            -storetype PKCS12 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA -keysize 2048 -validity 30 \
+            -dname "CN=Valepolis CI Test, OU=Automated Tests, O=Valepolis, C=PT"
           test -s "$KEYSTORE_PATH"
-          # O preset Android do Godot usa uma password para assinar.
-          # Exigimos que as duas passwords coincidam; não alteramos a chave original.
-          if [ "$ANDROID_KEYSTORE_PASSWORD" != "$ANDROID_KEY_PASSWORD" ]; then
-            echo 'FAIL|Godot Android requer passwords iguais para keystore e chave neste preset.' | tee -a build/preflight-v0.3.0.txt
-            exit 1
-          fi
-          # Atualiza exclusivamente as opções de assinatura do preset Android.
+          # Esta chave é descartável e serve apenas para instalar/testar a APK de preview.
+          # Não é adequada para atualizações de uma aplicação publicada.
           sed -i "s|^keystore/release=.*|keystore/release=\"$KEYSTORE_PATH\"|" export_presets.cfg
-          sed -i "s|^keystore/release_user=.*|keystore/release_user=\"$ANDROID_KEY_ALIAS\"|" export_presets.cfg
-          # Evita gravar a palavra-passe no ficheiro de configuração do projeto.
-          sed -i 's|^keystore/release_password=.*|keystore/release_password=\"\"|' export_presets.cfg
-          echo 'PASS|Assinatura configurada a partir dos quatro GitHub Secrets; nenhuma chave temporária criada.' >> build/preflight-v0.3.0.txt
+          sed -i "s|^keystore/release_user=.*|keystore/release_user=\"$KEY_ALIAS\"|" export_presets.cfg
+          sed -i "s|^keystore/release_password=.*|keystore/release_password=\"$KEYSTORE_PASSWORD\"|" export_presets.cfg
+          echo 'PASS|Assinatura temporária de teste criada no runner; nenhum GitHub Secret necessário.' | tee -a build/preflight-v0.3.0.txt
 
       - name: PRE-FLIGHT estático do projeto
         working-directory: ${{ env.PROJECT_DIR }}
@@ -165,9 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build
-          if [ -x tools/preflight.sh ]; then
-            bash tools/preflight.sh build/preflight-v0.3.0.txt
-          elif [ -f tools/preflight.sh ]; then
+          if [ -f tools/preflight.sh ]; then
             bash tools/preflight.sh build/preflight-v0.3.0.txt
           else
             echo 'FAIL|tools/preflight.sh não encontrado' | tee -a build/preflight-v0.3.0.txt
@@ -179,7 +157,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Alteração apenas no checkout efémero do runner; o projeto entregue mantém os plugins ativos.
           python3 - <<'PYCODE'
           from pathlib import Path
           import re
@@ -192,7 +169,7 @@ jobs:
           print("CI_EDITOR_PLUGINS_DISABLED=1")
           PYCODE
 
-      - name: Importar recursos Godot (sem ferramentas 3D externas)
+      - name: Importar recursos Godot e analisar scripts
         id: godot_import
         working-directory: ${{ env.PROJECT_DIR }}
         timeout-minutes: 8
@@ -263,26 +240,18 @@ jobs:
           fi
           echo 'PASS|Testes funcionais V0.3.0' | tee -a build/preflight-v0.3.0.txt
 
-      - name: Exportar APK Android assinada com chave GitHub
+      - name: Exportar APK Android de teste (chave temporária)
         id: export_apk
         working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build
-          : "${ANDROID_KEYSTORE_PASSWORD:?GitHub Secret ANDROID_KEYSTORE_PASSWORD ausente}"
-          : "${ANDROID_KEY_PASSWORD:?GitHub Secret ANDROID_KEY_PASSWORD ausente}"
-          # A password do keystore é o campo aceite pelo preset Android do Godot.
-          sed -i "s|^keystore/release_password=.*|keystore/release_password=\"$ANDROID_KEYSTORE_PASSWORD\"|" export_presets.cfg
           godot --headless --path . --export-release 'Android' "build/${APK_NAME}" 2>&1 | tee godot-export.log
           export_status=${PIPESTATUS[0]}
-          sed -i 's|^keystore/release_password=.*|keystore/release_password=""|' export_presets.cfg
           if [ "$export_status" -ne 0 ]; then exit "$export_status"; fi
           test -s "build/${APK_NAME}"
-          echo 'PASS|Exportação da APK com assinatura GitHub' | tee -a build/preflight-v0.3.0.txt
+          echo 'PASS|Exportação da APK de teste assinada com chave temporária' | tee -a build/preflight-v0.3.0.txt
 
       - name: Verificar alinhamento, assinatura e hash da APK
         id: verify_apk
@@ -306,7 +275,6 @@ jobs:
           mkdir -p build
           REPORT=build/preflight-v0.3.0.txt
           touch "$REPORT"
-          # Evita relatórios que declarem PASS se algum gate ou a exportação falhou.
           if [ "$JOB_STATUS" != 'success' ]; then
             if ! grep -q '^FAIL|' "$REPORT"; then echo 'FAIL|Workflow terminou com falha antes da conclusão de todos os gates.' >> "$REPORT"; fi
             result=FAIL
@@ -314,14 +282,13 @@ jobs:
                ! grep -q '^PASS|Addon próprio de relevo Valepólis$' "$REPORT" || \
                ! grep -q '^PASS|Geração procedural nativa de personagens e edifícios$' "$REPORT" || \
                ! grep -q '^PASS|Testes funcionais V0.3.0$' "$REPORT" || \
-               ! grep -q '^PASS|Exportação da APK com assinatura GitHub$' "$REPORT" || \
+               ! grep -q '^PASS|Exportação da APK de teste assinada com chave temporária$' "$REPORT" || \
                ! grep -q '^PASS|Verificação de alinhamento e assinatura da APK$' "$REPORT"; then
             echo 'INCOMPLETE|Falta confirmação de um ou mais gates obrigatórios.' >> "$REPORT"
             result=INCOMPLETE
           else
             result=PASS
           fi
-          # Reescreve apenas o resumo final para não acumular contagens antigas.
           sed -i '/^TOTAL_PASS=/d; /^TOTAL_FAIL=/d; /^TOTAL_SKIP=/d; /^RESULTADO=/d' "$REPORT"
           passes=$(grep -c '^PASS|' "$REPORT" || true)
           fails=$(grep -c '^FAIL|' "$REPORT" || true)
@@ -340,12 +307,12 @@ jobs:
             ${{ env.PROJECT_DIR }}/build-godot-import.log
             ${{ env.PROJECT_DIR }}/build-functional.log
             ${{ env.PROJECT_DIR }}/build-valepolis-terrain.log
-            
+            ${{ env.PROJECT_DIR }}/build-native-3d-assets.log
             ${{ env.PROJECT_DIR }}/godot-export.log
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Publicar APK assinada com chave GitHub
+      - name: Publicar APK de teste
         if: success() && steps.verify_apk.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
