@@ -1,0 +1,360 @@
+name: Valepólis V0.3.0 — PRE-FLIGHT e APK Android sem assinatura oficial
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valepolis-v030-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: '4.5-stable'
+  APK_NAME: 'Quando-Toca-a-Sirene-V0.3.0-DEBUG.apk'
+
+jobs:
+  build:
+    name: Auditar, testar e exportar APK Android de teste sem keystore oficial
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v5
+
+      - name: Localizar projeto Godot ou ZIP do projeto
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/valepolis-project"
+          PROJECT_FILE=""
+
+          # Aceita projeto na raiz ou dentro de uma pasta extraída.
+          if [ -f "project.godot" ]; then
+            PROJECT_FILE="$PWD/project.godot"
+          else
+            PROJECT_FILE="$(find . -path './.git' -prune -o -path './build' -prune -o -type f -name project.godot -print -quit)"
+          fi
+
+          # Não escolher silenciosamente um ZIP arbitrário. Se houver ZIPs, exige
+          # exatamente um ZIP que contenha project.godot; assim não testa versões antigas.
+          if [ -z "$PROJECT_FILE" ]; then
+            mapfile -t candidates < <(find . -path './.git' -prune -o -path './build' -prune -o -type f -iname '*.zip' -print | while IFS= read -r z; do
+              if unzip -Z1 "$z" 2>/dev/null | grep -Eq '(^|/)project\.godot$'; then printf '%s\n' "$z"; fi
+            done)
+            if [ "${#candidates[@]}" -ne 1 ]; then
+              echo "ERRO: esperava exatamente um ZIP completo com project.godot; encontrados ${#candidates[@]}."
+              printf '%s\n' "${candidates[@]}"
+              exit 1
+            fi
+            candidate="${candidates[0]}"
+            echo "ZIP único do projeto encontrado: $candidate"
+            unzip -q "$candidate" -d "$RUNNER_TEMP/valepolis-project"
+            PROJECT_FILE="$(find "$RUNNER_TEMP/valepolis-project" -type f -name project.godot -print -quit)"
+          fi
+
+          if [ -z "$PROJECT_FILE" ] || [ ! -f "$PROJECT_FILE" ]; then
+            echo 'ERRO: não foi encontrado project.godot nem ZIP contendo project.godot.'
+            echo 'Coloca o projeto extraído no repositório ou inclui o ZIP completo do projeto.'
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Projeto selecionado: $PROJECT_DIR"
+          test -f "$PROJECT_DIR/Main.tscn"
+          test -f "$PROJECT_DIR/main.gd"
+          test -f "$PROJECT_DIR/export_presets.cfg"
+
+      - name: Desativar plugin de editor Terrain3D apenas no runner CI
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYPLUGIN'
+          from pathlib import Path
+          import re
+          p = Path("project.godot")
+          content = p.read_text(encoding="utf-8")
+          pattern = re.compile(r"(?ms)^\[editor_plugins\][ \t]*\n(.*?)(?=^\[|\Z)")
+          match = pattern.search(content)
+          if not match:
+              content = content.rstrip() + '\n\n[editor_plugins]\nenabled=PackedStringArray()\n'
+          else:
+              section = match.group(1)
+              if not re.search(r"(?m)^enabled\s*=", section):
+                  new_section = section.rstrip() + '\nenabled=PackedStringArray()\n'
+              else:
+                  new_section = re.sub(r"(?m)^enabled\s*=.*$", "enabled=PackedStringArray()", section)
+              content = content[:match.start(1)] + new_section + content[match.end(1):]
+          p.write_text(content, encoding="utf-8")
+          check = p.read_text(encoding="utf-8")
+          if not re.search(r"(?ms)^\[editor_plugins\]\s*\nenabled=PackedStringArray\(\)", check):
+              raise SystemExit("Não foi possível desativar o plugin de editor no runner.")
+          print("CI_EDITOR_PLUGIN_DISABLED=Terrain3D")
+          print("INFO|A extensão nativa Terrain3D e os seus binários não foram removidos.")
+          PYPLUGIN
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Godot e templates de exportação
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/godot" "$HOME/.local/share/godot/export_templates/4.5.stable"
+          curl -fL "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" -o "$RUNNER_TEMP/godot/godot.zip"
+          unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot/bin"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot/bin" -maxdepth 2 -type f -name 'Godot_v*_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          sudo install "$GODOT_BIN" /usr/local/bin/godot
+
+          curl -fL "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" -o "$RUNNER_TEMP/godot/templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot/templates-unpacked"
+          unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates-unpacked"
+          TEMPLATE_DIR="$(find "$RUNNER_TEMP/godot/templates-unpacked" -type d -name templates -print -quit)"
+          test -n "$TEMPLATE_DIR"
+          cp -a "$TEMPLATE_DIR/." "$HOME/.local/share/godot/export_templates/4.5.stable/"
+          godot --version
+
+      - name: Instalar Android SDK e ferramentas de assinatura
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo 'ERRO: sdkmanager não encontrado.' >&2
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/zipalign"
+
+      - name: Inicializar ADB para verificações Android sem dispositivo físico
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A exportação não requer um telefone ligado; iniciar o servidor evita
+          # a falha de ligação a tcp:5037 quando as ferramentas Android o consultam.
+          adb start-server
+          adb devices -l
+
+      - name: PRE-FLIGHT estático do projeto
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          if [ -x tools/preflight.sh ]; then
+            bash tools/preflight.sh build/preflight-v0.3.0.txt
+          elif [ -f tools/preflight.sh ]; then
+            bash tools/preflight.sh build/preflight-v0.3.0.txt
+          else
+            echo 'FAIL|tools/preflight.sh não encontrado' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+
+      - name: Importar recursos nativos Godot
+        id: godot_import
+        working-directory: ${{ env.PROJECT_DIR }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p build
+          LOG="build-godot-import.log"
+          echo "INFO|Início da importação de recursos nativos Godot: $(date -Is)" | tee "$LOG"
+          echo "INFO|Godot: $(godot --version 2>&1)" | tee -a "$LOG"
+          set +e
+          timeout --verbose --signal=TERM --kill-after=20s 7m \
+            godot --headless --editor --path . --import --verbose 2>&1 | tee -a "$LOG"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "INFO|Código de saída da importação Godot: $status" | tee -a "$LOG"
+          if [ "$status" -ne 0 ] || grep -Eiq 'SCRIPT ERROR:|Parse Error:|(^|[[:space:]])ERROR:' "$LOG"; then
+            echo 'FAIL|Importação Godot de recursos do projeto falhou ou registou erros.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          echo 'PASS|Importação e análise dos scripts Godot' | tee -a build/preflight-v0.3.0.txt
+
+      - name: Testar relevo procedural 3D e colisão de Valepólis
+        id: terrain3d_gate
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p build
+          LOG="build-valepolis-terrain.log"
+          if [ ! -f tools/preflight_valepolis_terrain.gd ]; then
+            echo 'FAIL|Teste do relevo procedural tools/preflight_valepolis_terrain.gd não encontrado' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          if godot --headless --path . --script tools/preflight_valepolis_terrain.gd 2>&1 | tee "$LOG"; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ "$status" -ne 0 ] || grep -Eiq 'SCRIPT ERROR:|Parse Error:|(^|[[:space:]])ERROR:' "$LOG"; then
+            echo 'FAIL|Teste do relevo procedural 3D ou da colisão falhou; consultar build-valepolis-terrain.log.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          if ! grep -Eq '^VALEPOLIS_TERRAIN_PASS=vertices:[0-9]+,surfaces:[0-9]+,collision=ready$' "$LOG"; then
+            echo 'FAIL|O teste não confirmou malha 3D e colisão do relevo.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          echo 'PASS|Relevo procedural 3D de Valepólis: malha e colisão verificadas em runtime' | tee -a build/preflight-v0.3.0.txt
+
+      - name: Executar testes funcionais V0.3.0
+        id: functional
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ ! -f tools/preflight_functional.gd ]; then
+            echo 'FAIL|tools/preflight_functional.gd não encontrado' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          if godot --headless --path . --script tools/preflight_functional.gd 2>&1 | tee build-functional.log; then status=0; else status=$?; fi
+          if [ "$status" -ne 0 ] || grep -Eiq 'SCRIPT ERROR:|Parse Error:|(^|[[:space:]])ERROR:' build-functional.log || ! grep -q '^RESULTADO=FUNCTIONAL_UI_PASS$' build-functional.log; then
+            echo 'FAIL|Testes funcionais V0.3.0' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          echo 'PASS|Testes funcionais V0.3.0' | tee -a build/preflight-v0.3.0.txt
+
+      - name: Exportar APK Android de validação (sem secrets)
+        id: export_apk
+        working-directory: ${{ env.PROJECT_DIR }}
+        timeout-minutes: 17
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          LOG="godot-export.log"
+          echo "INFO|Início da exportação Android: $(date -Is)" | tee "$LOG"
+          echo "INFO|Godot: $(godot --version 2>&1)" | tee -a "$LOG"
+          echo "INFO|Preset: Android; modo: debug; destino: build/${APK_NAME}" | tee -a "$LOG"
+          set +e
+          timeout --verbose --signal=TERM --kill-after=30s 15m \
+            godot --headless --path . --export-debug 'Android' "build/${APK_NAME}" --verbose 2>&1 | tee -a "$LOG"
+          export_status=${PIPESTATUS[0]}
+          set -e
+          echo "INFO|Código de saída da exportação: $export_status" | tee -a "$LOG"
+          echo "INFO|Fim da exportação: $(date -Is)" | tee -a "$LOG"
+          if [ "$export_status" -eq 124 ] || [ "$export_status" -eq 137 ]; then
+            echo 'FAIL|Exportação Android excedeu 15 minutos; consultar godot-export.log.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          if [ "$export_status" -ne 0 ]; then
+            echo "FAIL|Exportação Android terminou com código $export_status; consultar godot-export.log." | tee -a build/preflight-v0.3.0.txt
+            exit "$export_status"
+          fi
+          if [ ! -s "build/${APK_NAME}" ]; then
+            echo 'FAIL|Godot terminou sem erro, mas a APK não existe ou está vazia.' | tee -a build/preflight-v0.3.0.txt
+            exit 1
+          fi
+          echo 'PASS|Exportação da APK Android de validação (debug)' | tee -a build/preflight-v0.3.0.txt
+
+      - name: Verificar alinhamento, assinatura debug e hash da APK
+        id: verify_apk
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zipalign -c -v 4 "build/${APK_NAME}"
+          apksigner verify --verbose "build/${APK_NAME}"
+          sha256sum "build/${APK_NAME}" > "build/${APK_NAME}.sha256"
+          echo 'PASS|Verificação de alinhamento e assinatura debug da APK' | tee -a build/preflight-v0.3.0.txt
+
+      - name: Finalizar relatório PRE-FLIGHT
+        if: always()
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p build
+          REPORT=build/preflight-v0.3.0.txt
+          touch "$REPORT"
+          # Evita relatórios que declarem PASS se algum gate ou a exportação falhou.
+          if [ "$JOB_STATUS" != 'success' ]; then
+            if ! grep -q '^FAIL|' "$REPORT"; then echo 'FAIL|Workflow terminou com falha antes da conclusão de todos os gates.' >> "$REPORT"; fi
+            result=FAIL
+          elif ! grep -q '^PASS|Importação e análise dos scripts Godot$' "$REPORT" || \
+               ! grep -q '^PASS|Relevo procedural 3D de Valepólis: malha e colisão verificadas em runtime$' "$REPORT" || \
+               ! grep -q '^PASS|Testes funcionais V0.3.0$' "$REPORT" || \
+               ! grep -q '^PASS|Exportação da APK Android de validação (debug)$' "$REPORT" || \
+               ! grep -q '^PASS|Verificação de alinhamento e assinatura debug da APK$' "$REPORT"; then
+            echo 'INCOMPLETE|Falta confirmação de um ou mais gates obrigatórios.' >> "$REPORT"
+            result=INCOMPLETE
+          else
+            result=PASS
+          fi
+          # Reescreve apenas o resumo final para não acumular contagens antigas.
+          sed -i '/^TOTAL_PASS=/d; /^TOTAL_FAIL=/d; /^TOTAL_SKIP=/d; /^RESULTADO=/d' "$REPORT"
+          passes=$(grep -c '^PASS|' "$REPORT" || true)
+          fails=$(grep -c '^FAIL|' "$REPORT" || true)
+          skips=$(grep -c '^SKIP|' "$REPORT" || true)
+          printf 'TOTAL_PASS=%s\nTOTAL_FAIL=%s\nTOTAL_SKIP=%s\nRESULTADO=%s\n' "$passes" "$fails" "$skips" "$result" >> "$REPORT"
+          cat "$REPORT"
+          if [ "$result" != 'PASS' ]; then exit 1; fi
+
+      - name: Publicar relatório e logs (mesmo em falha)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-PRE-FLIGHT-Report
+          path: |
+            ${{ env.PROJECT_DIR }}/build/preflight-v0.3.0.txt
+            ${{ env.PROJECT_DIR }}/build-godot-import.log
+            ${{ env.PROJECT_DIR }}/build-functional.log
+            ${{ env.PROJECT_DIR }}/build-terrain3d-runtime.log
+            ${{ env.PROJECT_DIR }}/build-terrain3d-data-generation.log
+            ${{ env.PROJECT_DIR }}/godot-export.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publicar APK de validação (debug, sem chave oficial)
+        if: success() && steps.verify_apk.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-Android-Preview
+          path: |
+            ${{ env.PROJECT_DIR }}/build/${{ env.APK_NAME }}
+            ${{ env.PROJECT_DIR }}/build/${{ env.APK_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Empacotar projeto completo validado
+        if: success() && steps.verify_apk.outcome == 'success'
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -qr "$RUNNER_TEMP/Valepolis-V0.3.0-Projeto-Completo-Validado.zip" . \
+            -x './.git/*' './.godot/*' './build/*' './*.log'
+
+      - name: Publicar ZIP completo do projeto validado
+        if: success() && steps.verify_apk.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-Projeto-Completo
+          path: ${{ runner.temp }}/Valepolis-V0.3.0-Projeto-Completo-Validado.zip
+          if-no-files-found: error
+          retention-days: 14
