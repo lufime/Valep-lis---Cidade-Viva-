@@ -21,7 +21,7 @@ env:
 
 jobs:
   build:
-    name: Auditar, testar e exportar APK assinada com chave GitHub
+    name: Auditar, testar e exportar APK Android de teste sem GitHub Secrets
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -125,39 +125,6 @@ jobs:
           # a falha de ligação a tcp:5037 quando as ferramentas Android o consultam.
           adb start-server
           adb devices -l
-
-      - name: Preparar assinatura oficial via GitHub Secrets
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build
-          for secret_name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [ -z "${!secret_name:-}" ]; then
-              echo "FAIL|GitHub Secret obrigatório ausente: ${secret_name}" | tee -a build/preflight-v0.3.0.txt
-              exit 1
-            fi
-          done
-          KEYSTORE_PATH="$RUNNER_TEMP/valepolis-release.keystore"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          test -s "$KEYSTORE_PATH"
-          # O preset Android do Godot usa uma password para assinar.
-          # Exigimos que as duas passwords coincidam; não alteramos a chave original.
-          if [ "$ANDROID_KEYSTORE_PASSWORD" != "$ANDROID_KEY_PASSWORD" ]; then
-            echo 'FAIL|Godot Android requer passwords iguais para keystore e chave neste preset.' | tee -a build/preflight-v0.3.0.txt
-            exit 1
-          fi
-          # Atualiza exclusivamente as opções de assinatura do preset Android.
-          sed -i "s|^keystore/release=.*|keystore/release=\"$KEYSTORE_PATH\"|" export_presets.cfg
-          sed -i "s|^keystore/release_user=.*|keystore/release_user=\"$ANDROID_KEY_ALIAS\"|" export_presets.cfg
-          # Evita gravar a palavra-passe no ficheiro de configuração do projeto.
-          sed -i 's|^keystore/release_password=.*|keystore/release_password=\"\"|' export_presets.cfg
-          echo 'PASS|Assinatura configurada a partir dos quatro GitHub Secrets; nenhuma chave temporária criada.' >> build/preflight-v0.3.0.txt
 
       - name: Validar importação CSV salarial contra catálogo JSON
         id: salary_csv
@@ -290,26 +257,19 @@ jobs:
           fi
           echo 'PASS|Testes funcionais V0.3.0' | tee -a build/preflight-v0.3.0.txt
 
-      - name: Exportar APK Android assinada com chave GitHub
+      - name: Exportar APK Android de teste sem GitHub Secrets
         id: export_apk
         working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build
-          : "${ANDROID_KEYSTORE_PASSWORD:?GitHub Secret ANDROID_KEYSTORE_PASSWORD ausente}"
-          : "${ANDROID_KEY_PASSWORD:?GitHub Secret ANDROID_KEY_PASSWORD ausente}"
-          # A password do keystore é o campo aceite pelo preset Android do Godot.
-          sed -i "s|^keystore/release_password=.*|keystore/release_password=\"$ANDROID_KEYSTORE_PASSWORD\"|" export_presets.cfg
-          godot --headless --path . --export-release 'Android' "build/${APK_NAME}" 2>&1 | tee godot-export.log
+          # Exportação debug: Godot usa a assinatura de depuração; não exige Secrets.
+          godot --headless --path . --export-debug 'Android' "build/${APK_NAME}" 2>&1 | tee godot-export.log
           export_status=${PIPESTATUS[0]}
-          sed -i 's|^keystore/release_password=.*|keystore/release_password=""|' export_presets.cfg
           if [ "$export_status" -ne 0 ]; then exit "$export_status"; fi
           test -s "build/${APK_NAME}"
-          echo 'PASS|Exportação da APK com assinatura GitHub' | tee -a build/preflight-v0.3.0.txt
+          echo 'PASS|Exportação da APK debug sem GitHub Secrets' | tee -a build/preflight-v0.3.0.txt
 
       - name: Verificar alinhamento, assinatura e hash da APK
         id: verify_apk
@@ -320,7 +280,7 @@ jobs:
           zipalign -c -v 4 "build/${APK_NAME}"
           apksigner verify --verbose "build/${APK_NAME}"
           sha256sum "build/${APK_NAME}" > "build/${APK_NAME}.sha256"
-          echo 'PASS|Verificação de alinhamento e assinatura da APK' | tee -a build/preflight-v0.3.0.txt
+          echo 'PASS|Verificação de alinhamento e assinatura da APK debug' | tee -a build/preflight-v0.3.0.txt
 
       - name: Restaurar CSV salarial original no checkout do runner
         if: always()
@@ -356,8 +316,8 @@ jobs:
                ! grep -q '^PASS|Addon próprio de relevo Valepólis$' "$REPORT" || \
                ! grep -q '^PASS|Geração procedural nativa de personagens e edifícios$' "$REPORT" || \
                ! grep -q '^PASS|Testes funcionais V0.3.0$' "$REPORT" || \
-               ! grep -q '^PASS|Exportação da APK com assinatura GitHub$' "$REPORT" || \
-               ! grep -q '^PASS|Verificação de alinhamento e assinatura da APK$' "$REPORT"; then
+               ! grep -q '^PASS|Exportação da APK debug sem GitHub Secrets$' "$REPORT" || \
+               ! grep -q '^PASS|Verificação de alinhamento e assinatura da APK debug$' "$REPORT"; then
             echo 'INCOMPLETE|Falta confirmação de um ou mais gates obrigatórios.' >> "$REPORT"
             result=INCOMPLETE
           else
@@ -388,7 +348,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Publicar APK assinada com chave GitHub
+      - name: Publicar APK debug sem GitHub Secrets
         if: success() && steps.verify_apk.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
