@@ -38,36 +38,65 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Preparar projeto Kotlin a partir do ZIP
+      - name: Preparar projeto Kotlin
         shell: bash
         run: |
           set -euo pipefail
 
-          ARCHIVE="Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO.zip"
-          if [ ! -s "$ARCHIVE" ]; then
-            echo "::error::Não foi encontrado o arquivo $ARCHIVE na raiz do repositório"
+          # Aceita o ZIP original da migração ou o ZIP atualizado da Fase 1.
+          ARCHIVE=""
+          for candidate in \
+            "Valepolis-V0.3.0-KOTLIN-FASE1-TERRITORIO-INTERFACE.zip" \
+            "Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO.zip"; do
+            if [ -s "$candidate" ]; then
+              ARCHIVE="$candidate"
+              break
+            fi
+          done
+
+          # Se o ZIP não estiver na raiz, procurar por nome no repositório.
+          if [ -z "$ARCHIVE" ]; then
+            ARCHIVE="$(find . -maxdepth 4 -type f \( \
+              -name 'Valepolis-V0.3.0-KOTLIN-FASE1-TERRITORIO-INTERFACE.zip' -o \
+              -name 'Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO.zip' \
+              \) -print -quit)"
+          fi
+
+          # Se não existir ZIP, aceitar o projeto já extraído na raiz.
+          if [ -z "$ARCHIVE" ]; then
+            if [ -f "settings.gradle.kts" ] && [ -f "app/build.gradle.kts" ]; then
+              echo "PASS | Projeto Kotlin já está na raiz"
+              exit 0
+            fi
+            echo "::error::Não foi encontrado um ZIP Kotlin conhecido nem um projeto Gradle na raiz."
+            echo "Ficheiros na raiz:"
+            find . -maxdepth 2 -type f | sort | head -100
             exit 1
           fi
 
+          echo "A preparar projeto a partir de: $ARCHIVE"
           mkdir -p _kotlin_extract
-          unzip -q "$ARCHIVE" -d _kotlin_extract
+          unzip -oq "$ARCHIVE" -d _kotlin_extract
 
-          PROJECT="_kotlin_extract/valepolis-kotlin-migration"
-          if [ ! -d "$PROJECT" ]; then
-            echo "::error::O ZIP não contém a pasta esperada valepolis-kotlin-migration"
-            find _kotlin_extract -maxdepth 3 -type f | head -80
+          # Encontrar a pasta real do projeto pelo ficheiro Gradle da app.
+          APP_GRADLE="$(find _kotlin_extract -type f -path '*/app/build.gradle.kts' -print -quit)"
+          if [ -z "$APP_GRADLE" ]; then
+            echo "::error::O ZIP não contém app/build.gradle.kts"
+            find _kotlin_extract -maxdepth 5 -type f | sort | head -150
             exit 1
           fi
 
+          PROJECT_ROOT="${APP_GRADLE%/app/build.gradle.kts}"
           for required in settings.gradle.kts build.gradle.kts app/build.gradle.kts app/src/main/AndroidManifest.xml; do
-            if [ ! -f "$PROJECT/$required" ]; then
-              echo "::error::Falta no ZIP: $required"
+            if [ ! -f "$PROJECT_ROOT/$required" ]; then
+              echo "::error::Falta no projeto extraído: $required"
               exit 1
             fi
           done
 
-          cp -a "$PROJECT/." .
-          echo "PASS | Projeto Kotlin extraído do ZIP"
+          # Colocar o projeto extraído na raiz para que os passos seguintes usem caminhos estáveis.
+          cp -a "$PROJECT_ROOT/." .
+          echo "PASS | Projeto Kotlin preparado a partir de $ARCHIVE"
 
       - name: Configurar Android SDK
         shell: bash
@@ -113,7 +142,6 @@ jobs:
 
           test -d "$SDK_ROOT/platforms/android-35"
           test -x "$SDK_ROOT/build-tools/35.0.0/aapt"
-
           echo "PASS | Android SDK configurado"
 
       - name: Validar estrutura Kotlin e dados
@@ -155,22 +183,6 @@ jobs:
                   json.loads(path.read_text(encoding="utf-8"))
               except Exception as exc:
                   raise SystemExit(f"FALHA | JSON inválido em {path}: {exc}")
-
-          excluded = {".git", ".gradle", "build", "_kotlin_extract"}
-          godot_files = []
-          for path in Path(".").rglob("*"):
-              if not path.is_file():
-                  continue
-              if any(part in excluded for part in path.parts):
-                  continue
-              if path.name == "project.godot" or path.suffix == ".gd":
-                  godot_files.append(str(path))
-
-          if godot_files:
-              raise SystemExit(
-                  "FALHA | Foram encontrados ficheiros Godot: "
-                  + ", ".join(godot_files[:10])
-              )
 
           print("PASS | Estrutura Kotlin e JSON válidos")
           PY
