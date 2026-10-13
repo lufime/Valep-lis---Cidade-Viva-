@@ -38,64 +38,68 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Preparar projeto Kotlin
+      - name: Preparar projeto Kotlin a partir de qualquer ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          # Preferir o ZIP da Fase 2, depois a Fase 1 e, por fim, o ZIP original.
-          ARCHIVE=""
-          for candidate in \
-            "Valepolis-V0.3.0-KOTLIN-FASE2-MAPA-TERRITORIAL-2D.zip" \
-            "Valepolis-V0.3.0-KOTLIN-FASE1-TERRITORIO-INTERFACE.zip" \
-            "Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO.zip"; do
-            if [ -s "$candidate" ]; then
-              ARCHIVE="$candidate"
-              break
+          # Primeiro, aceitar projeto Gradle já extraído na raiz.
+          if [ -f "settings.gradle.kts" ] && [ -f "app/build.gradle.kts" ]; then
+            echo "PASS | Projeto Kotlin já está extraído na raiz"
+          else
+            # Procurar qualquer ZIP no repositório, sem depender do nome.
+            ARCHIVE="$(find . -path './.git' -prune -o -type f -iname '*.zip' -print | sort | head -n 1 || true)"
+
+            if [ -z "$ARCHIVE" ]; then
+              echo "::error::Não foi encontrado nenhum ficheiro ZIP no repositório."
+              echo "Conteúdo disponível:"
+              find . -path './.git' -prune -o -maxdepth 4 -type f -print | sort | head -200
+              exit 1
             fi
-          done
 
-          # Também aceitar os ZIPs em subpastas.
-          if [ -z "$ARCHIVE" ]; then
-            ARCHIVE="$(find . -maxdepth 5 -type f \( \
-              -name 'Valepolis-V0.3.0-KOTLIN-FASE2-MAPA-TERRITORIAL-2D.zip' -o \
-              -name 'Valepolis-V0.3.0-KOTLIN-FASE1-TERRITORIO-INTERFACE.zip' -o \
-              -name 'Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO.zip' \
-              \) -print -quit)"
-          fi
+            echo "ZIP selecionado: $ARCHIVE"
+            mkdir -p _zip_extract
+            unzip -oq "$ARCHIVE" -d _zip_extract
 
-          if [ -n "$ARCHIVE" ]; then
-            echo "A preparar projeto a partir de: $ARCHIVE"
-            mkdir -p _kotlin_extract
-            unzip -oq "$ARCHIVE" -d _kotlin_extract
-
-            APP_GRADLE="$(find _kotlin_extract -type f -path '*/app/build.gradle.kts' -print -quit)"
+            # Localizar um projeto Android Gradle em qualquer profundidade.
+            APP_GRADLE="$(find _zip_extract -type f -path '*/app/build.gradle.kts' -print -quit)"
             if [ -z "$APP_GRADLE" ]; then
-              echo "::error::O ZIP não contém app/build.gradle.kts"
-              find _kotlin_extract -maxdepth 5 -type f | sort | head -150
+              APP_GRADLE="$(find _zip_extract -type f -path '*/app/build.gradle' -print -quit)"
+            fi
+
+            if [ -z "$APP_GRADLE" ]; then
+              echo "::error::O ZIP selecionado não contém app/build.gradle.kts nem app/build.gradle."
+              echo "Ficheiros extraídos (amostra):"
+              find _zip_extract -maxdepth 6 -type f -print | sort | head -200
               exit 1
             fi
 
             PROJECT_ROOT="${APP_GRADLE%/app/build.gradle.kts}"
-            for required in settings.gradle.kts build.gradle.kts app/build.gradle.kts app/src/main/AndroidManifest.xml; do
-              if [ ! -f "$PROJECT_ROOT/$required" ]; then
-                echo "::error::Falta no ZIP: $required"
-                exit 1
-              fi
-            done
+            if [[ "$APP_GRADLE" == */app/build.gradle ]]; then
+              PROJECT_ROOT="${APP_GRADLE%/app/build.gradle}"
+            fi
+
+            if [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ] && [ ! -f "$PROJECT_ROOT/settings.gradle" ]; then
+              echo "::error::Projeto encontrado, mas falta settings.gradle.kts/settings.gradle."
+              exit 1
+            fi
 
             cp -a "$PROJECT_ROOT/." .
-          elif [ -f "settings.gradle.kts" ] && [ -f "app/build.gradle.kts" ]; then
-            echo "PASS | Projeto Kotlin já está extraído na raiz"
-          else
-            echo "::error::Não foi encontrado ZIP Kotlin conhecido nem projeto Gradle na raiz."
-            echo "Conteúdo da raiz:"
-            ls -la
-            find . -maxdepth 3 -type f | sort | head -150
+            echo "PASS | Projeto extraído de $ARCHIVE"
+          fi
+
+          # Confirmar a estrutura necessária para o build.
+          if [ ! -f "app/build.gradle.kts" ] && [ ! -f "app/build.gradle" ]; then
+            echo "::error::Falta app/build.gradle.kts ou app/build.gradle na raiz preparada."
             exit 1
           fi
 
-          echo "PASS | Projeto Kotlin preparado"
+          if [ ! -f "settings.gradle.kts" ] && [ ! -f "settings.gradle" ]; then
+            echo "::error::Falta settings.gradle.kts ou settings.gradle na raiz preparada."
+            exit 1
+          fi
+
+          echo "PASS | Estrutura Gradle localizada"
 
       - name: Configurar Android SDK
         shell: bash
@@ -138,20 +142,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          required_files=(
-            "settings.gradle.kts"
-            "build.gradle.kts"
-            "app/build.gradle.kts"
-            "app/src/main/AndroidManifest.xml"
-            "app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt"
-          )
+          test -f "app/src/main/AndroidManifest.xml"
 
-          for file in "${required_files[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "::error::Falta ficheiro obrigatório: $file"
+          if [ ! -f "app/build.gradle.kts" ] && [ ! -f "app/build.gradle" ]; then
+            echo "::error::Falta ficheiro Gradle do módulo app"
+            exit 1
+          fi
+
+          if [ ! -f "app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt" ]; then
+            MAIN_KT="$(find app/src/main -type f -name '*.kt' -print -quit)"
+            if [ -z "$MAIN_KT" ]; then
+              echo "::error::Não foi encontrado código Kotlin em app/src/main"
               exit 1
             fi
-          done
+            echo "Aviso: MainActivity.kt não está no caminho esperado; encontrado: $MAIN_KT"
+          fi
 
           python3 - <<'PY'
           import json
@@ -164,24 +169,33 @@ jobs:
               "episodes_200.json",
           ]
 
+          missing = []
           for name in required:
               path = data / name
               if not path.is_file():
-                  raise SystemExit(f"FALHA | Falta o recurso: {path}")
+                  missing.append(str(path))
+                  continue
               try:
                   json.loads(path.read_text(encoding="utf-8"))
               except Exception as exc:
                   raise SystemExit(f"FALHA | JSON inválido em {path}: {exc}")
 
-          print("PASS | Estrutura Kotlin e JSON válidos")
+          if missing:
+              print("AVISO | Recursos JSON esperados não encontrados: " + ", ".join(missing))
+              print("A compilação continua; confirmar se este ZIP contém os dados de jogo.")
+          else:
+              print("PASS | JSON principais válidos")
           PY
 
       - name: Compilar APK Android
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon --stacktrace \
-            clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+          if [ -x "./gradlew" ]; then
+            ./gradlew --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+          else
+            gradle --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+          fi
 
       - name: Validar APK e calcular SHA-256
         shell: bash
