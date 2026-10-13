@@ -195,14 +195,18 @@ jobs:
           set -uo pipefail
           mkdir -p build
           LOG="build-godot-import.log"
+          # Runner limpo: remove apenas cache gerado pelo Godot; nunca recursos do projeto.
+          rm -rf .godot
           set +e
-          timeout --verbose --signal=TERM --kill-after=20s 7m godot --headless --editor --path . --import 2>&1 | tee "$LOG"
+          # Usar o ciclo normal do editor headless e saída explícita, em vez de --import,
+          # que no runner anterior terminou em double free depois de importar todos os recursos.
+          timeout --verbose --signal=TERM --kill-after=20s 7m godot --headless --editor --path . --quit 2>&1 | tee "$LOG"
           status=${PIPESTATUS[0]}
           set -e
           echo "INFO|Código de saída da importação Godot: $status" | tee -a "$LOG"
           if [ "$status" -ne 0 ] || grep -Eiq 'SCRIPT ERROR:|Parse Error:|(^|[[:space:]])ERROR:' "$LOG"; then
-            echo 'FAIL|Importação Godot registou erros no log.' | tee -a build/preflight-v0.3.0.txt
-            tail -n 100 "$LOG" || true
+            echo 'FAIL|Importação Godot falhou ou terminou com erro; consultar build-godot-import.log.' | tee -a build/preflight-v0.3.0.txt
+            tail -n 120 "$LOG" || true
             exit 1
           fi
           echo 'PASS|Importação e análise dos scripts Godot' | tee -a build/preflight-v0.3.0.txt
