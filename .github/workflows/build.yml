@@ -1,159 +1,226 @@
-name: Valepólis V0.3.0 — Kotlin Android Build
+name: Valepólis V0.3.0 — PRE-FLIGHT e APK Android (Kotlin Fase 5.1)
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/build.yml"
+      - "Valepolis-V0.3.0-KOTLIN-FASE5.1-LIMITES-BAIRROS-3D*.zip"
 
 permissions:
   contents: read
 
 concurrency:
-  group: valepolis-kotlin-android-${{ github.ref }}
+  group: valepolis-v030-fase51-android-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  JAVA_VERSION: "17"
+  APK_NAME: "Valepolis-V0.3.0-Fase5.1-Android.apk"
+  ZIP_PATTERN: "Valepolis-V0.3.0-KOTLIN-FASE5.1-LIMITES-BAIRROS-3D*.zip"
+
 jobs:
-  build:
-    name: Selecionar Fase 5.1, validar e compilar APK
+  preflight-android:
+    name: Validar Fase 5.1 e compilar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 35
 
     steps:
-      - name: Obter código
-        uses: actions/checkout@v5
+      - name: Obter repositório
+        uses: actions/checkout@v4
 
-      - name: Selecionar e extrair explicitamente a Fase 5.1
-        shell: bash
-        run: |
-          set -euo pipefail
-          ZIP_NAME="Valepolis-V0.3.0-KOTLIN-FASE5.1-LIMITES-BAIRROS-3D.zip"
-
-          if [ ! -f "$ZIP_NAME" ]; then
-            echo "::error::Falta o ZIP obrigatório: $ZIP_NAME"
-            echo "ZIPs encontrados na raiz:"
-            find . -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort
-            exit 1
-          fi
-
-          rm -rf _fase51_extract
-          mkdir -p _fase51_extract
-          unzip -q "$ZIP_NAME" -d _fase51_extract
-
-          APP_GRADLE="$(find _fase51_extract -type f \( -path '*/app/build.gradle.kts' -o -path '*/app/build.gradle' \) -print -quit)"
-          if [ -z "$APP_GRADLE" ]; then
-            echo "::error::O ZIP da Fase 5.1 não contém app/build.gradle(.kts)."
-            exit 1
-          fi
-
-          if [[ "$APP_GRADLE" == */app/build.gradle.kts ]]; then
-            PROJECT_ROOT="${APP_GRADLE%/app/build.gradle.kts}"
-          else
-            PROJECT_ROOT="${APP_GRADLE%/app/build.gradle}"
-          fi
-
-          if [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ] && [ ! -f "$PROJECT_ROOT/settings.gradle" ]; then
-            echo "::error::Falta settings.gradle(.kts) no projeto extraído."
-            exit 1
-          fi
-
-          # Limpa ficheiros de projeto previamente extraídos e copia apenas a Fase 5.1.
-          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' ! -name '_fase51_extract' -exec rm -rf {} +
-          cp -a "$PROJECT_ROOT/." .
-          echo "ZIP_SELECIONADO=$ZIP_NAME" | tee fase-selecionada.txt
-          echo "PROJECT_ROOT=$PROJECT_ROOT"
-          echo "Fase 5.1 extraída e preparada."
-
-      - name: Configurar Java 17
-        uses: actions/setup-java@v5
+      - name: Preparar Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
 
-      - name: Configurar Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Configurar Android SDK
+      - name: Selecionar explicitamente o ZIP da Fase 5.1
+        id: select_zip
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print 2>/dev/null | sort -V | tail -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "::error::Não foi encontrado sdkmanager em $SDK_ROOT"
+
+          mapfile -t CANDIDATES < <(
+            find . -maxdepth 1 -type f \
+              -name "$ZIP_PATTERN" \
+              -printf '%f\n' | sort -V
+          )
+
+          if [ "${#CANDIDATES[@]}" -eq 0 ]; then
+            echo "::error::Não foi encontrado o ZIP obrigatório da Fase 5.1."
+            echo "Padrão esperado: $ZIP_PATTERN"
+            echo "ZIPs existentes na raiz:"
+            find . -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort || true
             exit 1
           fi
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
-          test -d "$SDK_ROOT/platforms/android-35"
-          test -x "$SDK_ROOT/build-tools/35.0.0/aapt"
 
-      - name: Validar que o código é realmente Fase 5.1
+          # Preferir o nome canónico exato. Se o GitHub tiver acrescentado
+          # -1, -2, etc., escolher a variante numerada de versão mais alta.
+          SELECTED=""
+          for candidate in "${CANDIDATES[@]}"; do
+            if [ "$candidate" = "Valepolis-V0.3.0-KOTLIN-FASE5.1-LIMITES-BAIRROS-3D.zip" ]; then
+              SELECTED="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$SELECTED" ]; then
+            SELECTED="${CANDIDATES[-1]}"
+          fi
+
+          echo "zip_name=$SELECTED" >> "$GITHUB_OUTPUT"
+          echo "ZIP selecionado: $SELECTED"
+          echo "ZIP selecionado: $SELECTED" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Extrair ZIP selecionado
+        id: extract_zip
         shell: bash
+        env:
+          SELECTED_ZIP: ${{ steps.select_zip.outputs.zip_name }}
         run: |
           set -euo pipefail
-          test -f app/src/main/AndroidManifest.xml
-          MAIN="$(find app/src/main -type f -name 'MainActivity.kt' -print -quit)"
-          if [ -z "$MAIN" ]; then
-            echo "::error::MainActivity.kt não encontrado."
+
+          test -f "$SELECTED_ZIP" || {
+            echo "::error::O ZIP selecionado não existe: $SELECTED_ZIP"
+            exit 1
+          }
+
+          rm -rf "$RUNNER_TEMP/valepolis_fase51"
+          mkdir -p "$RUNNER_TEMP/valepolis_fase51"
+          unzip -q "$SELECTED_ZIP" -d "$RUNNER_TEMP/valepolis_fase51"
+
+          echo "ZIP extraído: $SELECTED_ZIP"
+          echo "Diretório de extração: $RUNNER_TEMP/valepolis_fase51"
+          echo "ZIP extraído: \`$SELECTED_ZIP\`" >> "$GITHUB_STEP_SUMMARY"
+
+          # Descobrir a raiz do projeto pelo ficheiro Gradle da aplicação.
+          mapfile -t GRADLE_FILES < <(
+            find "$RUNNER_TEMP/valepolis_fase51" -type f \
+              \( -path '*/app/build.gradle.kts' -o -path '*/app/build.gradle' \) \
+              -print | sort
+          )
+
+          if [ "${#GRADLE_FILES[@]}" -eq 0 ]; then
+            echo "::error::O ZIP não contém app/build.gradle.kts nem app/build.gradle."
+            find "$RUNNER_TEMP/valepolis_fase51" -maxdepth 5 -type f | head -200 || true
             exit 1
           fi
-          if ! grep -q 'Fase 5.1' "$MAIN"; then
-            echo "::error::O código extraído não identifica Fase 5.1 em $MAIN"
-            grep -n 'Migração Kotlin nativo' "$MAIN" || true
+
+          # Usar a primeira raiz encontrada e registar o caminho no output.
+          APP_GRADLE="${GRADLE_FILES[0]}"
+          PROJECT_ROOT="$(dirname "$(dirname "$APP_GRADLE")")"
+
+          if [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ] && [ ! -f "$PROJECT_ROOT/settings.gradle" ]; then
+            echo "::error::Foi encontrado Gradle da app, mas não settings.gradle(.kts) na raiz: $PROJECT_ROOT"
             exit 1
           fi
-          if [ ! -f app/src/main/assets/data/limites_bairros_v030.json ]; then
-            echo "::error::Falta limites_bairros_v030.json nos assets da aplicação."
+
+          echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+          echo "Raiz do projeto Kotlin: $PROJECT_ROOT"
+          echo "Raiz do projeto Kotlin: \`$PROJECT_ROOT\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validar cabeçalho e dados dos 25 bairros
+        shell: bash
+        env:
+          PROJECT_ROOT: ${{ steps.extract_zip.outputs.project_root }}
+        run: |
+          set -euo pipefail
+
+          HEADER_FILE="$PROJECT_ROOT/app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt"
+          BOUNDARIES_FILE="$PROJECT_ROOT/app/src/main/assets/data/limites_bairros_v030.json"
+
+          if [ ! -f "$HEADER_FILE" ]; then
+            echo "::error::Falta MainActivity.kt no caminho esperado: $HEADER_FILE"
+            find "$PROJECT_ROOT/app/src/main" -type f | head -200 || true
             exit 1
           fi
-          python3 - <<'PY'
+
+          if ! grep -Fq "Fase 5.1" "$HEADER_FILE"; then
+            echo "::error::O cabeçalho de MainActivity.kt não identifica a Fase 5.1."
+            grep -n -E 'Fase|V0\.3\.0|Migração' "$HEADER_FILE" | head -40 || true
+            exit 1
+          fi
+          echo "PASS: MainActivity.kt identifica a Fase 5.1."
+
+          if [ ! -f "$BOUNDARIES_FILE" ]; then
+            echo "::error::Falta o ficheiro territorial: $BOUNDARIES_FILE"
+            find "$PROJECT_ROOT/app/src/main/assets" -type f | head -200 || true
+            exit 1
+          fi
+
+          python3 - "$BOUNDARIES_FILE" <<'PY'
           import json
+          import sys
           from pathlib import Path
-          p = Path("app/src/main/assets/data/limites_bairros_v030.json")
-          data = json.loads(p.read_text(encoding="utf-8"))
-          districts = data.get("neighborhoods", [])
-          if len(districts) != 25:
-              raise SystemExit(f"FALHA | Esperados 25 bairros, encontrados {len(districts)}")
-          print("PASS | Fase 5.1 identificada; 25 registos territoriais encontrados")
+
+          path = Path(sys.argv[1])
+          try:
+              data = json.loads(path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::error::JSON territorial inválido: {exc}")
+              raise SystemExit(1)
+
+          # Aceitar uma lista direta ou um objeto que contenha a lista de bairros.
+          if isinstance(data, list):
+              neighborhoods = data
+          elif isinstance(data, dict):
+              neighborhoods = None
+              for key in ("bairros", "neighborhoods", "features", "limites", "items"):
+                  value = data.get(key)
+                  if isinstance(value, list):
+                      neighborhoods = value
+                      break
+              if neighborhoods is None:
+                  print("::error::Não foi encontrada uma lista de bairros reconhecida no JSON.")
+                  print("Chaves encontradas:", ", ".join(map(str, data.keys())))
+                  raise SystemExit(1)
+          else:
+              print("::error::O JSON territorial tem de ser uma lista ou um objeto.")
+              raise SystemExit(1)
+
+          if len(neighborhoods) != 25:
+              print(f"::error::Esperados 25 bairros; encontrados {len(neighborhoods)}.")
+              raise SystemExit(1)
+
+          print(f"PASS: {len(neighborhoods)} bairros encontrados em {path.name}.")
           PY
 
-      - name: Compilar APK Android
+          echo "PASS: cabeçalho Fase 5.1 e 25 bairros validados." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configurar permissões Gradle
         shell: bash
+        env:
+          PROJECT_ROOT: ${{ steps.extract_zip.outputs.project_root }}
         run: |
           set -euo pipefail
-          if [ -x ./gradlew ]; then
-            ./gradlew --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+          cd "$PROJECT_ROOT"
+          if [ -f gradlew ]; then
+            chmod +x gradlew
           else
-            gradle --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+            echo "::error::O ZIP não contém gradlew; não é possível garantir a versão Gradle do projeto."
+            exit 1
           fi
 
-      - name: Validar APK e calcular SHA-256
+      - name: Compilar APK debug
         shell: bash
+        env:
+          PROJECT_ROOT: ${{ steps.extract_zip.outputs.project_root }}
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          sha256sum "$APK" | tee "$APK.sha256"
-          echo "PASS | APK gerada"
+          cd "$PROJECT_ROOT"
+          ./gradlew --no-daemon --stacktrace assembleDebug
 
-      - name: Publicar APK, logs e fase selecionada
+      - name: Publicar APK e registos de validação
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Valepolis-V0.3.0-Fase5.1-Android
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/debug/app-debug.apk.sha256
-            build-kotlin.log
-            fase-selecionada.txt
           if-no-files-found: warn
-          retention-days: 14
+          path: |
+            ${{ steps.extract_zip.outputs.project_root }}/app/build/outputs/apk/debug/*.apk
+            ${{ runner.temp }}/valepolis_fase51/**
