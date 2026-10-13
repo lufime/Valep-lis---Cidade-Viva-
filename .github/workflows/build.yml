@@ -3,7 +3,9 @@ name: Valepólis V0.3.0 — Kotlin Android Build
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -20,61 +22,148 @@ jobs:
     name: Validar e compilar APK Kotlin
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+
     steps:
       - name: Obter código
         uses: actions/checkout@v5
+
       - name: Configurar Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+
       - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Instalar componentes Android
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Validar estrutura Kotlin (sem Godot)
+
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+
+          if [ ! -d "$SDK_ROOT/cmdline-tools" ]; then
+            echo "::error::Android SDK não encontrado em $SDK_ROOT"
+            exit 1
+          fi
+
+          SDKMANAGER="$(
+            find "$SDK_ROOT/cmdline-tools" \
+              -type f \
+              -name sdkmanager \
+              -print 2>/dev/null |
+              sort -V |
+              tail -n 1
+          )"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::Não foi encontrado o sdkmanager"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+          yes | "$SDKMANAGER" \
+            --sdk_root="$SDK_ROOT" \
+            --licenses >/dev/null 2>&1 || true
+
+          "$SDKMANAGER" \
+            --sdk_root="$SDK_ROOT" \
+            --install \
+            'platform-tools' \
+            'platforms;android-35' \
+            'build-tools;35.0.0'
+
+          test -d "$SDK_ROOT/platforms/android-35"
+          test -x "$SDK_ROOT/build-tools/35.0.0/aapt"
+
+          echo "PASS | Android SDK configurado"
+
+      - name: Validar estrutura Kotlin e dados
         shell: bash
         run: |
           set -euo pipefail
+
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt
+
           python3 - <<'PY'
           import json
           from pathlib import Path
-          data = Path('app/src/main/assets/data')
-          required = ['bairros_valepolis.json', 'populacao_valepolis.json', 'episodes_200.json']
+
+          data = Path("app/src/main/assets/data")
+
+          required = [
+              "bairros_valepolis.json",
+              "populacao_valepolis.json",
+              "episodes_200.json",
+          ]
+
           for name in required:
-              p = data / name
-              assert p.is_file(), f'Falta recurso: {name}'
-              json.loads(p.read_text(encoding='utf-8'))
-          bad = [str(p) for p in Path('.').rglob('*') if p.is_file() and (p.name == 'project.godot' or p.suffix == '.gd') and '.git' not in p.parts]
-          assert not bad, f'Resíduos Godot encontrados: {bad[:10]}'
-          print('PASS | Estrutura Kotlin e JSON principais válidos')
+              path = data / name
+              if not path.is_file():
+                  raise SystemExit(f"FALHA | Falta o recurso: {path}")
+
+              try:
+                  json.loads(path.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  raise SystemExit(
+                      f"FALHA | JSON inválido em {path}: {exc}"
+                  )
+
+          excluded = {".git", ".gradle", "build"}
+          godot_files = []
+
+          for path in Path(".").rglob("*"):
+              if not path.is_file():
+                  continue
+              if any(part in excluded for part in path.parts):
+                  continue
+              if path.name == "project.godot" or path.suffix == ".gd":
+                  godot_files.append(str(path))
+
+          if godot_files:
+              raise SystemExit(
+                  "FALHA | Foram encontrados ficheiros Godot: "
+                  + ", ".join(godot_files[:10])
+              )
+
+          print("PASS | Estrutura Kotlin e JSON válidos")
           PY
-      - name: Compilar APK debug
+
+      - name: Compilar APK Android
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
-      - name: Verificar APK e SHA-256
+          gradle --no-daemon --stacktrace \
+            clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+
+      - name: Validar APK e calcular SHA-256
         shell: bash
         run: |
           set -euo pipefail
-          APK='app/build/outputs/apk/debug/app-debug.apk'
-          test -s "$APK"
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::A APK não foi gerada"
+            exit 1
+          fi
+
           sha256sum "$APK" | tee "$APK.sha256"
-      - name: Publicar APK e log
+
+          echo "PASS | APK gerada e ficheiro SHA-256 criado"
+
+      - name: Publicar APK e logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
