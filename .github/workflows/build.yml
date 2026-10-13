@@ -38,6 +38,37 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Preparar projeto Kotlin a partir do ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO.zip"
+          if [ ! -s "$ARCHIVE" ]; then
+            echo "::error::Não foi encontrado o arquivo $ARCHIVE na raiz do repositório"
+            exit 1
+          fi
+
+          mkdir -p _kotlin_extract
+          unzip -q "$ARCHIVE" -d _kotlin_extract
+
+          PROJECT="_kotlin_extract/valepolis-kotlin-migration"
+          if [ ! -d "$PROJECT" ]; then
+            echo "::error::O ZIP não contém a pasta esperada valepolis-kotlin-migration"
+            find _kotlin_extract -maxdepth 3 -type f | head -80
+            exit 1
+          fi
+
+          for required in settings.gradle.kts build.gradle.kts app/build.gradle.kts app/src/main/AndroidManifest.xml; do
+            if [ ! -f "$PROJECT/$required" ]; then
+              echo "::error::Falta no ZIP: $required"
+              exit 1
+            fi
+          done
+
+          cp -a "$PROJECT/." .
+          echo "PASS | Projeto Kotlin extraído do ZIP"
+
       - name: Configurar Android SDK
         shell: bash
         run: |
@@ -90,18 +121,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f app/build.gradle.kts
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt
+          required_files=(
+            "settings.gradle.kts"
+            "build.gradle.kts"
+            "app/build.gradle.kts"
+            "app/src/main/AndroidManifest.xml"
+            "app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Falta ficheiro obrigatório: $file"
+              exit 1
+            fi
+          done
 
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           data = Path("app/src/main/assets/data")
-
           required = [
               "bairros_valepolis.json",
               "populacao_valepolis.json",
@@ -112,17 +151,13 @@ jobs:
               path = data / name
               if not path.is_file():
                   raise SystemExit(f"FALHA | Falta o recurso: {path}")
-
               try:
                   json.loads(path.read_text(encoding="utf-8"))
               except Exception as exc:
-                  raise SystemExit(
-                      f"FALHA | JSON inválido em {path}: {exc}"
-                  )
+                  raise SystemExit(f"FALHA | JSON inválido em {path}: {exc}")
 
-          excluded = {".git", ".gradle", "build"}
+          excluded = {".git", ".gradle", "build", "_kotlin_extract"}
           godot_files = []
-
           for path in Path(".").rglob("*"):
               if not path.is_file():
                   continue
@@ -151,7 +186,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -s "$APK" ]; then
@@ -160,8 +194,7 @@ jobs:
           fi
 
           sha256sum "$APK" | tee "$APK.sha256"
-
-          echo "PASS | APK gerada e ficheiro SHA-256 criado"
+          echo "PASS | APK gerada e SHA-256 criado"
 
       - name: Publicar APK e logs
         if: always()
