@@ -1,0 +1,146 @@
+name: Valepólis V0.3.0 — PRE-FLIGHT 3D e APK bloqueado
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+concurrency:
+  group: valepolis-v030-preflight-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  preflight:
+    name: Localizar projeto, auditar e compilar
+    runs-on: ubuntu-24.04
+    outputs:
+      project_dir: ${{ steps.locate.outputs.project_dir }}
+      release_approved: ${{ steps.gate.outputs.release_approved }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Localizar projeto na raiz, subpastas ou ZIPs
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vp-extract"
+          find . -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' -print > "$RUNNER_TEMP/settings.txt"
+          found=""
+          while IFS= read -r f; do
+            d="$(dirname "$f")"
+            if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break; fi
+          done < "$RUNNER_TEMP/settings.txt"
+          if [[ -z "$found" ]]; then
+            while IFS= read -r z; do
+              dest="$RUNNER_TEMP/vp-extract/$(basename "$z" .zip)"
+              mkdir -p "$dest"
+              unzip -oq "$z" -d "$dest" || continue
+              while IFS= read -r f; do
+                d="$(dirname "$f")"
+                if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break 2; fi
+              done < <(find "$dest" -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path '*/.gradle/*' -print)
+            done < <(find . -type f -iname '*.zip' -not -path './.git/*' -print | sort)
+          fi
+          if [[ -z "$found" ]]; then
+            echo "::error::Não encontrei projeto Android nem em pastas nem dentro de ZIPs."
+            find . -maxdepth 3 -type f -not -path './.git/*' | sort
+            exit 1
+          fi
+          echo "project_dir=$found" >> "$GITHUB_OUTPUT"
+          echo "Projeto encontrado: $found"
+      - name: PRE-FLIGHT estático dos dados territoriais
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          root=Path(os.environ['PROJECT_DIR']); checks=[]
+          def ck(n,ok,info=''): checks.append((n,bool(ok),info))
+          ck('Manifest Android',(root/'app/src/main/AndroidManifest.xml').is_file())
+          assets=root/'app/src/main/assets'
+          def load(name):
+              p=next(iter(assets.rglob(name)),None) if assets.exists() else None
+              if not p: ck(name+' presente',False,'não encontrado'); return None
+              try: return json.loads(p.read_text(encoding='utf-8'))
+              except Exception as e: ck(name+' JSON válido',False,str(e)); return None
+          b=load('bairros_valepolis.json')
+          if isinstance(b,dict):
+              ns=b.get('neighborhoods')
+              ck('Cidade Valepólis',b.get('city')=='Valepólis',repr(b.get('city')))
+              ck('Contagem declarada 25',b.get('neighborhood_count')==25)
+              ck('25 bairros',isinstance(ns,list) and len(ns)==25)
+              if isinstance(ns,list):
+                  ids=[x.get('id') for x in ns if isinstance(x,dict)]
+                  names=[x.get('name') for x in ns if isinstance(x,dict)]
+                  ck('IDs únicos',len(ids)==25 and len(set(ids))==25)
+                  ck('Nomes preenchidos e únicos',len(names)==25 and all(isinstance(n,str) and n.strip() for n in names) and len(set(names))==25)
+          lim=load('limites_bairros_v030.json')
+          if isinstance(lim,dict):
+              ns=lim.get('neighborhoods')
+              ck('25 limites',lim.get('neighborhood_count')==25)
+              ck('25 geometrias',isinstance(ns,list) and len(ns)==25)
+          for n,ok,info in checks: print(('PASS' if ok else 'FAIL')+' | '+n+((' | '+info) if info else ''))
+          fail=sum(not ok for _,ok,_ in checks)
+          print(f'TOTAL_PASS={len(checks)-fail} TOTAL_FAIL={fail}')
+          sys.exit(1 if fail else 0)
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compilar Kotlin sem gerar APK
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: cd "$PROJECT_DIR" && gradle --no-daemon :app:compileDebugKotlin
+      - name: Avaliar gate 3D
+        id: gate
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['PROJECT_DIR'])
+          try: g=json.loads((root/'quality_gate_3d.json').read_text(encoding='utf-8'))
+          except Exception: g={}
+          c=g.get('criteria',{}); e=g.get('evidence',{}); s=e.get('screenshots',[]) if isinstance(e,dict) else []
+          evidence=bool(str(e.get('device_model','')).strip() and str(e.get('android_version','')).strip() and str(e.get('validation_notes','')).strip() and isinstance(s,list) and s and all(isinstance(x,str) and x.strip() and (root/x).is_file() for x in s))
+          ok=g.get('approved') is True and g.get('status')=='APPROVED' and isinstance(c,dict) and bool(c) and all(v is True for v in c.values()) and evidence
+          print('release_approved='+('true' if ok else 'false'))
+          print('gate_status='+('APPROVED' if ok else 'BLOCKED'))
+          PY
+          if [[ "$(grep '^release_approved=' "$GITHUB_OUTPUT" | tail -n1 | cut -d= -f2)" == "true" ]]; then echo "Gate APK: APROVADO"; else echo "Gate APK: BLOQUEADO — falta validação 3D"; fi
+  release:
+    needs: preflight
+    if: needs.preflight.outputs.release_approved == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Localizar projeto e construir APK aprovado
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vp-extract"
+          found=""
+          while IFS= read -r f; do
+            d="$(dirname "$f")"
+            if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break; fi
+          done < <(find . -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' -print)
+          if [[ -z "$found" ]]; then
+            while IFS= read -r z; do
+              dest="$RUNNER_TEMP/vp-extract/$(basename "$z" .zip)"; mkdir -p "$dest"; unzip -oq "$z" -d "$dest" || continue
+              while IFS= read -r f; do d="$(dirname "$f")"; if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break 2; fi; done < <(find "$dest" -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path '*/.gradle/*' -print)
+            done < <(find . -type f -iname '*.zip' -not -path './.git/*' -print | sort)
+          fi
+          [[ -n "$found" ]] || { echo "::error::Projeto não encontrado para release"; exit 1; }
+          cd "$found"; gradle --no-daemon :app:assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-APK-3D-APROVADO
+          path: ${{ runner.temp }}/vp-extract/**/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
