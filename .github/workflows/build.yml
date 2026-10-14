@@ -1,221 +1,109 @@
-name: Valepólis V0.3.0 — Build Android universal ZIP
+name: Valepólis V0.3.0 — Kotlin Android Build
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: valepolis-v030-android-${{ github.ref }}
+  group: valepolis-kotlin-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  android-build:
-    name: Descobrir ZIP, validar e compilar APK
+  build:
+    name: Validar e compilar APK Kotlin
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Encontrar ZIP completo do projeto
-        id: zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          CANDIDATE_DIR="$RUNNER_TEMP/zip_candidates"
-          rm -rf "$CANDIDATE_DIR"
-          mkdir -p "$CANDIDATE_DIR"
-
-          mapfile -t ALL_ZIPS < <(
-            find . -maxdepth 1 -type f -iname '*.zip' \
-              ! -iname '*workflow*' \
-              ! -iname '*logs*' \
-              ! -iname '*diagnostico*' \
-              ! -iname '*artifact*' \
-              -printf '%f\n' | sort -V
-          )
-
-          if [ "${#ALL_ZIPS[@]}" -eq 0 ]; then
-            echo "::error::Não foi encontrado nenhum ZIP na raiz do repositório."
-            exit 1
-          fi
-
-          SELECTED=""
-          SELECTED_DIR=""
-          # Extrair e verificar cada ZIP do mais recente para o mais antigo.
-          # Evita depender do comportamento de listagem de ZIP e não confunde
-          # pacotes de workflow/logs com projetos Android.
-          for ((i=${#ALL_ZIPS[@]}-1; i>=0; i--)); do
-            candidate="${ALL_ZIPS[$i]}"
-            test_dir="$CANDIDATE_DIR/candidate_$i"
-            mkdir -p "$test_dir"
-
-            if ! unzip -tq "$candidate" >/dev/null 2>&1; then
-              echo "Ignorado: ZIP inválido: $candidate"
-              rm -rf "$test_dir"
-              continue
-            fi
-
-            if ! unzip -q "$candidate" -d "$test_dir"; then
-              echo "Ignorado: não foi possível extrair $candidate"
-              rm -rf "$test_dir"
-              continue
-            fi
-
-            if find "$test_dir" -type f \
-                \( -path '*/app/build.gradle' -o -path '*/app/build.gradle.kts' \) \
-                -print -quit | grep -q .; then
-              if find "$test_dir" -type f \
-                  \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
-                  -print -quit | grep -q .; then
-                SELECTED="$candidate"
-                SELECTED_DIR="$test_dir"
-                break
-              fi
-            fi
-
-            rm -rf "$test_dir"
-          done
-
-          if [ -z "$SELECTED" ]; then
-            echo "::error::Nenhum ZIP contém app/build.gradle(.kts) e settings.gradle(.kts)."
-            echo "ZIPs encontrados:"
-            printf ' - %s\n' "${ALL_ZIPS[@]}"
-            echo "Conteúdo resumido dos ZIPs:"
-            for candidate in "${ALL_ZIPS[@]}"; do
-              echo "### $candidate"
-              unzip -Z1 "$candidate" 2>/dev/null | head -30 || true
-            done
-            exit 1
-          fi
-
-          echo "zip_name=$SELECTED" >> "$GITHUB_OUTPUT"
-          echo "extract_dir=$SELECTED_DIR" >> "$GITHUB_OUTPUT"
-          echo "ZIP selecionado: $SELECTED"
-          echo "ZIP selecionado: \`$SELECTED\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Localizar raiz Android
-        id: project
-        shell: bash
-        env:
-          EXTRACT_DIR: ${{ steps.zip.outputs.extract_dir }}
-        run: |
-          set -euo pipefail
-          mapfile -t APP_GRADLES < <(
-            find "$EXTRACT_DIR" -type f \
-              \( -path '*/app/build.gradle' -o -path '*/app/build.gradle.kts' \) \
-              -print | sort
-          )
-
-          ROOT=""
-          for app_gradle in "${APP_GRADLES[@]}"; do
-            candidate_root="$(dirname "$(dirname "$app_gradle")")"
-            if [ -f "$candidate_root/settings.gradle" ] || [ -f "$candidate_root/settings.gradle.kts" ]; then
-              ROOT="$candidate_root"
-              break
-            fi
-          done
-
-          if [ -z "$ROOT" ]; then
-            echo "::error::O ZIP foi selecionado, mas a raiz Gradle não pôde ser determinada."
-            find "$EXTRACT_DIR" -maxdepth 7 -type f | head -300 || true
-            exit 1
-          fi
-
-          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Projeto Android: $ROOT"
-          echo "Projeto Android: \`$ROOT\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Validar dados territoriais quando presentes
-        shell: bash
-        env:
-          ROOT: ${{ steps.project.outputs.root }}
-        run: |
-          set -euo pipefail
-          BOUNDARIES="$ROOT/app/src/main/assets/data/limites_bairros_v030.json"
-          if [ -f "$BOUNDARIES" ]; then
-            python3 - "$BOUNDARIES" <<'PY'
-          import json, sys
-          from pathlib import Path
-          p = Path(sys.argv[1])
-          data = json.loads(p.read_text(encoding="utf-8"))
-          if isinstance(data, list):
-              items = data
-          elif isinstance(data, dict):
-              items = next((data[k] for k in ("bairros", "neighborhoods", "features", "limites", "items")
-                            if isinstance(data.get(k), list)), None)
-          else:
-              items = None
-          if items is None:
-              raise SystemExit("Formato territorial não reconhecido.")
-          if len(items) != 25:
-              raise SystemExit(f"Esperados 25 bairros; encontrados {len(items)}.")
-          print("PASS: 25 bairros encontrados.")
-          PY
-          else
-            echo "::warning::Não existe limites_bairros_v030.json nesta versão; validação territorial omitida."
-          fi
-
-      - name: Preparar Java 17
-        uses: actions/setup-java@v4
+      - name: Obter código
+        uses: actions/checkout@v5
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
-
-      - name: Preparar Gradle
+          java-version: '17'
+      - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
-
-      - name: Compilar APK debug
-        id: build
+          gradle-version: '8.9'
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Instalar componentes Android
         shell: bash
-        env:
-          ROOT: ${{ steps.project.outputs.root }}
         run: |
           set -euo pipefail
-          cd "$ROOT"
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew --no-daemon --stacktrace assembleDebug
-          else
-            gradle --no-daemon --stacktrace assembleDebug
-          fi
-
-          APK="$(find app/build/outputs/apk -type f -name '*.apk' -print -quit)"
-          if [ -z "$APK" ]; then
-            echo "::error::A compilação terminou sem gerar APK."
-            exit 1
-          fi
-
-          mkdir -p "$RUNNER_TEMP/valepolis_apk"
-          cp "$APK" "$RUNNER_TEMP/valepolis_apk/Valepolis-V0.3.0-Android.apk"
-          echo "apk_path=$RUNNER_TEMP/valepolis_apk/Valepolis-V0.3.0-Android.apk" >> "$GITHUB_OUTPUT"
-          echo "APK gerada: $APK"
-          echo "APK gerada: \`$APK\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publicar APK
-        if: success()
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Validar estrutura Kotlin (sem Godot)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = Path('app/src/main/assets/data')
+          required = ['bairros_valepolis.json', 'populacao_valepolis.json', 'episodes_200.json']
+          for name in required:
+              p = data / name
+              assert p.is_file(), f'Falta recurso: {name}'
+              json.loads(p.read_text(encoding='utf-8'))
+          bad = [str(p) for p in Path('.').rglob('*') if p.is_file() and (p.name == 'project.godot' or p.suffix == '.gd') and '.git' not in p.parts]
+          assert not bad, f'Resíduos Godot encontrados: {bad[:10]}'
+          print('PASS | Estrutura Kotlin e JSON principais válidos')
+          PY
+      - name: Bloquear APK enquanto o 3D não estiver aprovado a 100%
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('quality_gate_3d.json')
+          if not p.is_file():
+              raise SystemExit('FAIL | Falta quality_gate_3d.json; APK bloqueado.')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          if d.get('approved') is not True or d.get('status') != 'APPROVED':
+              raise SystemExit('BLOCKED | O 3D ainda não foi aprovado. APK não será compilado nem publicado.')
+          criteria = d.get('criteria', {})
+          missing = [k for k, v in criteria.items() if v is not True]
+          evidence = d.get('evidence', {})
+          if missing:
+              raise SystemExit('BLOCKED | Critérios por validar: ' + ', '.join(missing))
+          if not evidence.get('device_model') or not evidence.get('android_version') or not evidence.get('screenshots') or not evidence.get('validation_notes'):
+              raise SystemExit('BLOCKED | Falta evidência de validação visual real em Android.')
+          print('PASS | Aprovação e evidência declaradas; a validação visual continua a exigir revisão humana.')
+          PY
+      - name: Compilar APK debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+      - name: Verificar APK e SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
+      - name: Publicar APK e log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Valepolis-V0.3.0-Android
-          if-no-files-found: error
-          path: ${{ steps.build.outputs.apk_path }}
-
-      - name: Guardar diagnóstico em caso de falha
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Valepolis-V0.3.0-Build-Diagnostico
-          if-no-files-found: ignore
+          name: Valepolis-V0.3.0-Kotlin-Android
           path: |
-            ${{ runner.temp }}/zip_candidates/**
-            ${{ steps.project.outputs.root }}/app/build/reports/**
-            ${{ steps.project.outputs.root }}/app/build/outputs/logs/**
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
+            build-kotlin.log
+          if-no-files-found: warn
+          retention-days: 14
