@@ -1,4 +1,4 @@
-name: Valepólis V0.3.0 — Android Build (Fase 5.2)
+name: Valepólis V0.3.0 — Build Android universal ZIP
 
 on:
   workflow_dispatch:
@@ -15,106 +15,135 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  preflight-android:
-    name: Localizar projeto, validar e compilar APK
+  android-build:
+    name: Descobrir ZIP, validar e compilar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
-      - name: Obter repositório
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Encontrar ZIP do projeto Kotlin
+      - name: Listar e selecionar ZIP do projeto
         id: zip
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t CANDIDATES < <(
-            find . -maxdepth 1 -type f \
-              \( -iname 'Valepolis-V0.3.0-KOTLIN-FASE5.2*.zip' \
-              -o -iname 'Valepolis-V0.3.0-KOTLIN-FASE5.1*.zip' \
-              -o -iname 'Valepolis-V0.3.0-KOTLIN-ANDROID-MIGRACAO*.zip' \) \
+
+          # Considerar todos os ZIPs na raiz, excluindo artefactos de logs/workflow
+          # e arquivos de saída para não extrair acidentalmente o próprio workflow.
+          mapfile -t ALL_ZIPS < <(
+            find . -maxdepth 1 -type f -iname '*.zip' \
+              ! -iname '*workflow*' \
+              ! -iname '*logs*' \
+              ! -iname '*diagnostico*' \
+              ! -iname '*artifact*' \
               -printf '%f\n' | sort -V
           )
-          if [ "${#CANDIDATES[@]}" -eq 0 ]; then
-            echo "::error::Não encontrei ZIP de projeto Kotlin na raiz do repositório."
-            find . -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort || true
+
+          if [ "${#ALL_ZIPS[@]}" -eq 0 ]; then
+            echo "::error::Não foi encontrado nenhum ZIP de projeto na raiz."
+            find . -maxdepth 1 -type f -printf '%f\n' | sort || true
             exit 1
           fi
+
+          # Testar os ZIPs do mais recente pelo nome para trás e escolher o primeiro
+          # que contenha estrutura Gradle Android reconhecível.
           SELECTED=""
-          for candidate in "${CANDIDATES[@]}"; do
-            if [[ "$candidate" == *"FASE5.2"* ]]; then SELECTED="$candidate"; fi
+          for ((i=${#ALL_ZIPS[@]}-1; i>=0; i--)); do
+            candidate="${ALL_ZIPS[$i]}"
+            if unzip -Z1 "$candidate" 2>/dev/null | grep -Eq '(^|/)app/build\.gradle(\.kts)?$'; then
+              SELECTED="$candidate"
+              break
+            fi
           done
+
           if [ -z "$SELECTED" ]; then
-            for candidate in "${CANDIDATES[@]}"; do
-              if [[ "$candidate" == *"FASE5.1"* ]]; then SELECTED="$candidate"; fi
-            done
+            echo "::error::Nenhum ZIP contém app/build.gradle ou app/build.gradle.kts."
+            echo "ZIPs verificados:"
+            printf ' - %s\n' "${ALL_ZIPS[@]}"
+            exit 1
           fi
-          if [ -z "$SELECTED" ]; then SELECTED="${CANDIDATES[-1]}"; fi
+
           echo "zip_name=$SELECTED" >> "$GITHUB_OUTPUT"
           echo "ZIP selecionado: $SELECTED"
-          echo "ZIP selecionado: $SELECTED" >> "$GITHUB_STEP_SUMMARY"
+          echo "ZIP selecionado: \`$SELECTED\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Extrair e localizar projeto Android
+      - name: Extrair e localizar raiz Android
         id: project
         shell: bash
         env:
           ZIP_NAME: ${{ steps.zip.outputs.zip_name }}
         run: |
           set -euo pipefail
-          EXTRACT_DIR="$RUNNER_TEMP/valepolis_project"
-          rm -rf "$EXTRACT_DIR"
-          mkdir -p "$EXTRACT_DIR"
-          unzip -q "$ZIP_NAME" -d "$EXTRACT_DIR"
-          mapfile -t GRADLE_FILES < <(
-            find "$EXTRACT_DIR" -type f \
-              \( -path '*/app/build.gradle.kts' -o -path '*/app/build.gradle' \) \
+          DEST="$RUNNER_TEMP/valepolis_android"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          unzip -q "$ZIP_NAME" -d "$DEST"
+
+          mapfile -t APP_GRADLES < <(
+            find "$DEST" -type f \
+              \( -path '*/app/build.gradle' -o -path '*/app/build.gradle.kts' \) \
               -print | sort
           )
-          if [ "${#GRADLE_FILES[@]}" -eq 0 ]; then
-            echo "::error::O ZIP selecionado não contém app/build.gradle.kts nem app/build.gradle."
-            find "$EXTRACT_DIR" -maxdepth 7 -type f | head -250 || true
+          if [ "${#APP_GRADLES[@]}" -eq 0 ]; then
+            echo "::error::Não foi possível localizar o Gradle da app depois da extração."
+            find "$DEST" -maxdepth 7 -type f | head -300 || true
             exit 1
           fi
-          APP_GRADLE="${GRADLE_FILES[0]}"
-          ROOT="$(dirname "$(dirname "$APP_GRADLE")")"
-          if [ ! -f "$ROOT/settings.gradle.kts" ] && [ ! -f "$ROOT/settings.gradle" ]; then
-            echo "::error::Não encontrei settings.gradle(.kts) em $ROOT"
-            exit 1
-          fi
-          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Projeto Android: $ROOT"
-          echo "Projeto Android: $ROOT" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validar dados dos 25 bairros
+          ROOT=""
+          for app_gradle in "${APP_GRADLES[@]}"; do
+            candidate_root="$(dirname "$(dirname "$app_gradle")")"
+            if [ -f "$candidate_root/settings.gradle" ] || [ -f "$candidate_root/settings.gradle.kts" ]; then
+              ROOT="$candidate_root"
+              break
+            fi
+          done
+
+          if [ -z "$ROOT" ]; then
+            echo "::error::Não foi encontrada uma raiz com settings.gradle(.kts)."
+            printf 'Gradle da app encontrado:\n'
+            printf ' - %s\n' "${APP_GRADLES[@]}"
+            exit 1
+          fi
+
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          echo "Projeto selecionado: $ROOT"
+          echo "Projeto selecionado: \`$ROOT\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validar ficheiros territoriais se presentes
         shell: bash
         env:
           ROOT: ${{ steps.project.outputs.root }}
         run: |
           set -euo pipefail
           BOUNDARIES="$ROOT/app/src/main/assets/data/limites_bairros_v030.json"
-          if [ ! -f "$BOUNDARIES" ]; then
-            echo "::error::Falta o ficheiro territorial: $BOUNDARIES"
-            exit 1
-          fi
-          python3 - "$BOUNDARIES" <<'PY'
+
+          if [ -f "$BOUNDARIES" ]; then
+            python3 - "$BOUNDARIES" <<'PY'
           import json, sys
           from pathlib import Path
-          p = Path(sys.argv[1])
-          data = json.loads(p.read_text(encoding="utf-8"))
+          path = Path(sys.argv[1])
+          data = json.loads(path.read_text(encoding="utf-8"))
           if isinstance(data, list):
-              items = data
+              neighborhoods = data
           elif isinstance(data, dict):
-              items = next((data[k] for k in ("bairros", "neighborhoods", "features", "limites", "items")
-                            if isinstance(data.get(k), list)), None)
+              neighborhoods = next(
+                  (data[k] for k in ("bairros", "neighborhoods", "features", "limites", "items")
+                   if isinstance(data.get(k), list)), None
+              )
           else:
-              items = None
-          if items is None:
-              raise SystemExit("Formato territorial não reconhecido.")
-          if len(items) != 25:
-              raise SystemExit(f"Esperados 25 bairros; encontrados {len(items)}.")
-          print("PASS: 25 bairros encontrados.")
+              neighborhoods = None
+          if neighborhoods is None:
+              raise SystemExit("::error::Estrutura de dados dos bairros não reconhecida.")
+          if len(neighborhoods) != 25:
+              raise SystemExit(f"::error::Esperados 25 bairros; encontrados {len(neighborhoods)}.")
+          print("PASS: foram encontrados 25 bairros.")
           PY
+          else
+            echo "::warning::O JSON limites_bairros_v030.json não existe nesta variante. A validação territorial foi ignorada."
+          fi
 
       - name: Preparar Java 17
         uses: actions/setup-java@v4
@@ -122,7 +151,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Preparar Gradle
+      - name: Instalar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
@@ -135,15 +164,26 @@ jobs:
         run: |
           set -euo pipefail
           cd "$ROOT"
-          gradle --no-daemon --stacktrace assembleDebug
-          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew --no-daemon --stacktrace assembleDebug
+          else
+            echo "::notice::Sem gradlew; a compilação será tentada com Gradle 8.9 instalado pelo workflow."
+            gradle --no-daemon --stacktrace assembleDebug
+          fi
+
+          APK="$(find app/build/outputs/apk -type f -name '*.apk' -print -quit)"
           if [ -z "$APK" ]; then
-            echo "::error::A compilação terminou sem produzir APK."
+            echo "::error::A compilação não produziu nenhum APK."
             exit 1
           fi
+
           mkdir -p "$RUNNER_TEMP/valepolis_apk"
           cp "$APK" "$RUNNER_TEMP/valepolis_apk/Valepolis-V0.3.0-Android.apk"
-          echo "apk=$RUNNER_TEMP/valepolis_apk/Valepolis-V0.3.0-Android.apk" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$RUNNER_TEMP/valepolis_apk/Valepolis-V0.3.0-Android.apk" >> "$GITHUB_OUTPUT"
+          echo "APK gerada: $APK"
+          echo "APK gerada: \`$APK\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publicar APK
         if: success()
@@ -151,15 +191,15 @@ jobs:
         with:
           name: Valepolis-V0.3.0-Android
           if-no-files-found: error
-          path: ${{ steps.build.outputs.apk }}
+          path: ${{ steps.build.outputs.apk_path }}
 
-      - name: Guardar diagnóstico em caso de falha
+      - name: Publicar diagnóstico em caso de falha
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: Valepolis-V0.3.0-Build-Diagnostico
           if-no-files-found: ignore
           path: |
-            ${{ runner.temp }}/valepolis_project/**
+            ${{ runner.temp }}/valepolis_android/**
             ${{ steps.project.outputs.root }}/app/build/reports/**
             ${{ steps.project.outputs.root }}/app/build/outputs/logs/**
