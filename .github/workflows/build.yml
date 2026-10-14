@@ -14,186 +14,195 @@ concurrency:
 
 jobs:
   preflight:
-    name: Extrair projeto, auditar 3D e verificar compilação
+    name: Localizar projeto e auditar dados 3D
     runs-on: ubuntu-24.04
     outputs:
-      release_approved: ${{ steps.gate.outputs.release_approved }}
       project_dir: ${{ steps.locate.outputs.project_dir }}
+      release_approved: ${{ steps.gate.outputs.release_approved }}
     steps:
-      - name: Obter repositório
+      - name: Obter código
         uses: actions/checkout@v4
 
-      - name: Instalar ferramentas de auditoria
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip python3
-
-      - name: Localizar projeto Android (pasta ou ZIP carregado no GitHub)
+      - name: Localizar raiz real do projeto
         id: locate
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/valepolis-extracted"
-          find . -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
-            -not -path './.git/*' -print > "$RUNNER_TEMP/settings-files.txt"
-
+          candidates=(
+            "."
+            "valepolis-kotlin-migration"
+          )
           found=""
-          while IFS= read -r f; do
-            d="$(dirname "$f")"
-            if [[ -f "$d/app/build.gradle" || -f "$d/app/build.gradle.kts" ]]; then
+          for d in "${candidates[@]}"; do
+            if [[ -f "$d/settings.gradle.kts" && -f "$d/app/build.gradle.kts" ]]; then
               found="$d"; break
             fi
-          done < "$RUNNER_TEMP/settings-files.txt"
-
+          done
           if [[ -z "$found" ]]; then
-            while IFS= read -r archive; do
-              [[ -n "$archive" ]] || continue
-              dest="$RUNNER_TEMP/valepolis-extracted/$(basename "$archive" .zip)"
-              mkdir -p "$dest"
-              if ! unzip -oq "$archive" -d "$dest"; then
-                echo "::warning::Não foi possível extrair $archive"
-                continue
-              fi
-              while IFS= read -r f; do
-                d="$(dirname "$f")"
-                if [[ -f "$d/app/build.gradle" || -f "$d/app/build.gradle.kts" ]]; then
-                  found="$d"; break 2
-                fi
-              done < <(find "$dest" -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -not -path '*/.gradle/*' -print)
-            done < <(find . -type f -iname '*.zip' -not -path './.git/*' -print | sort)
+            found="$(find . -type f -name settings.gradle.kts -not -path '*/.gradle/*' -printf '%h\n' | head -n 1 || true)"
           fi
-
-          if [[ -z "$found" ]]; then
-            echo "::error::Não encontrei um projeto Android. O ZIP no repositório pode não conter settings.gradle(.kts) e app/build.gradle(.kts)."
-            echo "Ficheiros encontrados no repositório:"
-            find . -maxdepth 4 -type f -not -path './.git/*' | sort | head -n 200
-            echo "Conteúdo de ZIPs:"
-            find "$RUNNER_TEMP/valepolis-extracted" -maxdepth 5 -type f | head -n 100 || true
+          if [[ -z "$found" || ! -f "$found/app/build.gradle.kts" ]]; then
+            echo "::error::Não encontrei a raiz Android (settings.gradle.kts + app/build.gradle.kts). Carrega o conteúdo do projeto para a raiz do repositório."
+            find . -maxdepth 4 -type f | sort | head -n 150
             exit 1
           fi
-
           echo "project_dir=$found" >> "$GITHUB_OUTPUT"
-          echo "Projeto Android encontrado em: $found"
+          echo "Projeto encontrado em: $found"
 
-      - name: PRE-FLIGHT estático dos dados territoriais
+      - name: PRE-FLIGHT estático autónomo (não depende de tools/preflight_3d.py)
         env:
           PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
-        shell: bash
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
+          python - <<'PY'
           import json, os, sys
           from pathlib import Path
-          root=Path(os.environ["PROJECT_DIR"]).resolve()
-          results=[]
-          def check(label, ok, detail=""):
-              results.append((label, bool(ok), detail))
-          for rel in ("settings.gradle.kts","settings.gradle","app/build.gradle.kts","app/build.gradle","app/src/main/AndroidManifest.xml"):
-              if (root/rel).exists():
-                  check("Ficheiro obrigatório: "+rel, True)
-          check("Manifest Android", (root/"app/src/main/AndroidManifest.xml").is_file())
-          assets=root/"app/src/main/assets"
-          candidates=list(assets.rglob("*.json")) if assets.exists() else []
-          neighborhood_file=next((p for p in candidates if p.name=="bairros_valepolis.json"),None)
-          limits_file=next((p for p in candidates if p.name=="limites_bairros_v030.json"),None)
-          def load(p,label):
-              if not p:
-                  check(label,False,"Ficheiro não encontrado nos assets")
-                  return None
-              try:
-                  return json.loads(p.read_text(encoding="utf-8"))
+          root=Path(os.environ['PROJECT_DIR']).resolve()
+          checks=[]
+          def check(label, ok, detail=''):
+              checks.append((label,bool(ok),detail))
+          required=[
+            'settings.gradle.kts',
+            'build.gradle.kts',
+            'app/build.gradle.kts',
+            'app/src/main/AndroidManifest.xml',
+            'app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt',
+          ]
+          for rel in required:
+              check('Ficheiro obrigatório: '+rel,(root/rel).is_file())
+          def load(rel):
+              p=root/rel
+              try: return json.loads(p.read_text(encoding='utf-8'))
               except Exception as e:
-                  check(label,False,str(e))
-                  return None
-          b=load(neighborhood_file,"JSON dos bairros encontrado e válido")
+                  check('JSON válido: '+rel,False,str(e)); return None
+          b=load('app/src/main/assets/data/bairros_valepolis.json')
           if isinstance(b,dict):
-              ns=b.get("neighborhoods")
-              check("Cidade Valepólis",b.get("city")=="Valepólis",repr(b.get("city")))
-              check("Contagem declarada de 25 bairros",b.get("neighborhood_count")==25)
-              check("25 registos de bairros",isinstance(ns,list) and len(ns)==25)
+              ns=b.get('neighborhoods')
+              check('Cidade Valepólis',b.get('city')=='Valepólis',repr(b.get('city')))
+              check('25 bairros declarados',b.get('neighborhood_count')==25)
+              check('25 registos de bairros',isinstance(ns,list) and len(ns)==25)
               if isinstance(ns,list):
-                  ids=[x.get("id") for x in ns if isinstance(x,dict)]
-                  names=[x.get("name") for x in ns if isinstance(x,dict)]
-                  check("IDs únicos",len(ids)==25 and len(set(ids))==25)
-                  check("Nomes preenchidos e únicos",len(names)==25 and all(isinstance(n,str) and n.strip() for n in names) and len(set(names))==25)
-          lim=load(limits_file,"JSON dos limites encontrado e válido")
+                  ids=[x.get('id') for x in ns if isinstance(x,dict)]
+                  names=[x.get('name') for x in ns if isinstance(x,dict)]
+                  check('IDs únicos',len(ids)==25 and len(set(ids))==25)
+                  check('Nomes presentes e únicos',len(names)==25 and all(isinstance(n,str) and n.strip() for n in names) and len(set(names))==25)
+          lim=load('app/src/main/assets/data/limites_bairros_v030.json')
           if isinstance(lim,dict):
-              ns=lim.get("neighborhoods")
-              check("25 limites declarados",lim.get("neighborhood_count")==25)
-              check("25 geometrias de bairros",isinstance(ns,list) and len(ns)==25)
-          for label,ok,detail in results:
-              print(("PASS" if ok else "FAIL")+" | "+label+((" | "+detail) if detail else ""))
-          failures=sum(not ok for _,ok,_ in results)
-          print(f"TOTAL_PASS={len(results)-failures} TOTAL_FAIL={failures}")
-          if failures:
+              ns=lim.get('neighborhoods')
+              check('25 limites declarados',lim.get('neighborhood_count')==25)
+              check('25 geometrias',isinstance(ns,list) and len(ns)==25)
+              if isinstance(ns,list):
+                  ids=[x.get('id') for x in ns if isinstance(x,dict)]
+                  check('IDs das geometrias únicos',len(ids)==25 and len(set(ids))==25)
+          script=root/'tools/preflight_3d.py'
+          check('Script PRE-FLIGHT auxiliar presente (opcional)',script.is_file(),
+                'A auditoria autónoma continua sem este ficheiro.' if not script.is_file() else '')
+          for label,ok,detail in checks:
+              print(('PASS' if ok else 'FAIL')+' | '+label+((' | '+detail) if detail else ''))
+          fails=sum(not x[1] for x in checks if 'opcional' not in x[0])
+          print(f'TOTAL_PASS={sum(x[1] for x in checks)} TOTAL_FAIL={fails}')
+          if fails:
               sys.exit(1)
-          print("PRE-FLIGHT estático aprovado; isto não certifica a qualidade visual do 3D.")
+          print('PRE-FLIGHT ESTÁTICO PASSOU. Isto não certifica a qualidade visual nem o 3D a 100%.')
           PY
 
-      - name: Configurar Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Instalar Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Compilar Kotlin sem publicar APK
-        env:
-          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          gradle --no-daemon :app:compileDebugKotlin
-
-      - name: Avaliar gate de libertação do APK
+      - name: Determinar autorização para APK
         id: gate
         env:
           PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os
           from pathlib import Path
-          root=Path(os.environ["PROJECT_DIR"])
-          p=root/"quality_gate_3d.json"
-          try: g=json.loads(p.read_text(encoding="utf-8"))
+          root=Path(os.environ['PROJECT_DIR'])
+          p=root/'quality_gate_3d.json'
+          try: g=json.loads(p.read_text(encoding='utf-8'))
           except Exception: g={}
-          c=g.get("criteria",{})
-          e=g.get("evidence",{})
-          screenshots=e.get("screenshots",[]) if isinstance(e,dict) else []
-          screenshots_ok=isinstance(screenshots,list) and bool(screenshots) and all(isinstance(s,str) and s.strip() and (root/s).is_file() for s in screenshots)
-          evidence_ok=bool(str(e.get("device_model","")).strip() and str(e.get("android_version","")).strip() and str(e.get("validation_notes","")).strip() and screenshots_ok)
-          approved=(g.get("approved") is True and g.get("status")=="APPROVED" and isinstance(c,dict) and bool(c) and all(v is True for v in c.values()) and evidence_ok)
-          print("release_approved="+("true" if approved else "false"))
-          print("APK "+("autorizado pelo gate" if approved else "BLOQUEADO: falta aprovação/evidência visual"))
+          c=g.get('criteria',{})
+          e=g.get('evidence',{})
+          shots=e.get('screenshots',[]) if isinstance(e,dict) else []
+          shots_ok=isinstance(shots,list) and bool(shots) and all(isinstance(s,str) and s.strip() and (root/s).is_file() for s in shots)
+          evidence_ok=bool(str(e.get('device_model','')).strip() and str(e.get('android_version','')).strip() and str(e.get('validation_notes','')).strip() and shots_ok)
+          ok=(g.get('approved') is True and g.get('status')=='APPROVED' and isinstance(c,dict) and bool(c) and all(v is True for v in c.values()) and evidence_ok)
+          print('release_approved='+('true' if ok else 'false'))
+          print('gate_status='+('APPROVED' if ok else 'BLOCKED'))
           PY
+          if [[ "$(grep '^release_approved=' "$GITHUB_OUTPUT" | tail -n 1 | cut -d= -f2)" == "true" ]]; then
+            echo "Gate APK: APROVADO."
+          else
+            echo "Gate APK: BLOQUEADO — mundo 3D ainda não validado a 100%."
+          fi
 
-      - name: Construir APK release apenas após aprovação
-        if: steps.gate.outputs.release_approved == 'true' && github.ref == 'refs/heads/main'
-        env:
-          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+      - name: Resumo do gate
+        if: always()
+        run: |
+          echo "O PRE-FLIGHT estático não certifica sozinho a qualidade visual 3D."
+          echo "O APK permanece bloqueado sem aprovação explícita e evidências de validação real."
+
+  compile-check:
+    name: Verificar compilação Kotlin sem gerar APK
+    needs: preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Localizar projeto Android e compilar Kotlin
         shell: bash
         run: |
           set -euo pipefail
-          cd "$PROJECT_DIR"
-          gradle --no-daemon :app:assembleRelease
+          d="."
+          if [[ ! -f "$d/settings.gradle.kts" ]]; then
+            d="$(find . -type f -name settings.gradle.kts -not -path '*/.gradle/*' -printf '%h\n' | head -n 1 || true)"
+          fi
+          [[ -n "$d" && -f "$d/app/build.gradle.kts" ]] || { echo "::error::Raiz Android não encontrada"; exit 1; }
+          cd "$d"
+          gradle --no-daemon :app:compileDebugKotlin
 
-      - name: Publicar APK aprovado
-        if: steps.gate.outputs.release_approved == 'true' && github.ref == 'refs/heads/main'
+  build-apk:
+    name: Construir APK apenas após aprovação integral do 3D
+    needs: [preflight, compile-check]
+    if: needs.preflight.outputs.release_approved == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Verificar gate e construir APK release
+        shell: bash
+        run: |
+          set -euo pipefail
+          d="."
+          if [[ ! -f "$d/settings.gradle.kts" ]]; then
+            d="$(find . -type f -name settings.gradle.kts -not -path '*/.gradle/*' -printf '%h\n' | head -n 1 || true)"
+          fi
+          [[ -n "$d" && -f "$d/app/build.gradle.kts" ]] || { echo "::error::Raiz Android não encontrada"; exit 1; }
+          cd "$d"
+          python3 - <<'PY'
+          import json, pathlib, sys
+          p=pathlib.Path('quality_gate_3d.json')
+          try: g=json.loads(p.read_text(encoding='utf-8'))
+          except Exception: g={}
+          c=g.get('criteria',{}); e=g.get('evidence',{}); s=e.get('screenshots',[]) if isinstance(e,dict) else []
+          ok=g.get('approved') is True and g.get('status')=='APPROVED' and isinstance(c,dict) and bool(c) and all(v is True for v in c.values()) and bool(str(e.get('device_model','')).strip()) and bool(str(e.get('android_version','')).strip()) and bool(str(e.get('validation_notes','')).strip()) and isinstance(s,list) and bool(s) and all(isinstance(x,str) and x.strip() and pathlib.Path(x).is_file() for x in s)
+          print('Gate 3D aprovado' if ok else 'APK BLOQUEADO: gate 3D incompleto ou evidência em falta')
+          sys.exit(0 if ok else 1)
+          PY
+          gradle --no-daemon :app:assembleRelease
+      - name: Publicar APK validado
         uses: actions/upload-artifact@v4
         with:
           name: Valepolis-V0.3.0-APK-3D-APROVADO
-          path: ${{ steps.locate.outputs.project_dir }}/app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Resumo final
-        if: always()
-        run: |
-          echo "A aprovação estática não prova que o 3D está a 100%."
-          echo "O APK só pode ser publicado com gate aprovado e evidências visuais reais."
