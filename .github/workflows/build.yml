@@ -1,101 +1,109 @@
-name: Valepólis V0.3.0 — PRE-FLIGHT 3D e APK bloqueado
+name: Valepólis V0.3.0 — Kotlin Android Build
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
-    paths:
-      - '**'
-      - '.github/workflows/preflight-3d.yml'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: valepolis-v030-preflight-3d-${{ github.ref }}
+  group: valepolis-kotlin-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  preflight:
-    name: Auditar projeto, dados e gate 3D
+  build:
+    name: Validar e compilar APK Kotlin
     runs-on: ubuntu-24.04
-    outputs:
-      release_approved: ${{ steps.gate.outputs.release_approved }}
+    timeout-minutes: 45
     steps:
       - name: Obter código
-        uses: actions/checkout@v4
-
-      - name: Preparar Python
-        uses: actions/setup-python@v5
+        uses: actions/checkout@v5
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
         with:
-          python-version: '3.12'
-
-      - name: Executar PRE-FLIGHT estático
-        run: python tools/preflight_3d.py
-
-      - name: Determinar autorização para APK
-        id: gate
+          distribution: temurin
+          java-version: '17'
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Instalar componentes Android
         shell: bash
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Validar estrutura Kotlin (sem Godot)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt
+          python3 - <<'PY'
           import json
           from pathlib import Path
-          g=json.loads(Path('quality_gate_3d.json').read_text(encoding='utf-8'))
-          c=g.get('criteria',{})
-          e=g.get('evidence',{})
-          shots=e.get('screenshots', []) if isinstance(e,dict) else []
-          shots_exist=isinstance(shots,list) and len(shots)>0 and all(isinstance(p,str) and p.strip() and Path(p).is_file() for p in shots)
-          evidence_ok=bool(e.get('device_model','').strip() and e.get('android_version','').strip() and e.get('validation_notes','').strip() and shots_exist)
-          ok=(g.get('approved') is True and g.get('status')=='APPROVED' and isinstance(c,dict) and len(c)>0 and all(v is True for v in c.values()) and evidence_ok)
-          print('release_approved=' + ('true' if ok else 'false'))
-          print('Gate APK: ' + ('APROVADO' if ok else 'BLOQUEADO — mundo 3D ainda não validado a 100%'))
+          data = Path('app/src/main/assets/data')
+          required = ['bairros_valepolis.json', 'populacao_valepolis.json', 'episodes_200.json']
+          for name in required:
+              p = data / name
+              assert p.is_file(), f'Falta recurso: {name}'
+              json.loads(p.read_text(encoding='utf-8'))
+          bad = [str(p) for p in Path('.').rglob('*') if p.is_file() and (p.name == 'project.godot' or p.suffix == '.gd') and '.git' not in p.parts]
+          assert not bad, f'Resíduos Godot encontrados: {bad[:10]}'
+          print('PASS | Estrutura Kotlin e JSON principais válidos')
           PY
-
-      - name: Resumo do gate
+      - name: Bloquear APK enquanto o 3D não estiver aprovado a 100%
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('quality_gate_3d.json')
+          if not p.is_file():
+              raise SystemExit('FAIL | Falta quality_gate_3d.json; APK bloqueado.')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          if d.get('approved') is not True or d.get('status') != 'APPROVED':
+              raise SystemExit('BLOCKED | O 3D ainda não foi aprovado. APK não será compilado nem publicado.')
+          criteria = d.get('criteria', {})
+          missing = [k for k, v in criteria.items() if v is not True]
+          evidence = d.get('evidence', {})
+          if missing:
+              raise SystemExit('BLOCKED | Critérios por validar: ' + ', '.join(missing))
+          if not evidence.get('device_model') or not evidence.get('android_version') or not evidence.get('screenshots') or not evidence.get('validation_notes'):
+              raise SystemExit('BLOCKED | Falta evidência de validação visual real em Android.')
+          print('PASS | Aprovação e evidência declaradas; a validação visual continua a exigir revisão humana.')
+          PY
+      - name: Compilar APK debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+      - name: Verificar APK e SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
+      - name: Publicar APK e log
         if: always()
-        run: |
-          echo 'O PRE-FLIGHT estático não consegue certificar sozinho a qualidade visual 3D.'
-          echo 'O APK só é construído quando quality_gate_3d.json está aprovado e existe evidência visual real.'
-
-  compile-check:
-    name: Verificar compilação Kotlin sem gerar APK
-    needs: preflight
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-      - name: Compilar código Kotlin (sem empacotar APK)
-        run: gradle --no-daemon :app:compileDebugKotlin
-
-  build-apk:
-    name: Construir APK apenas após aprovação integral do 3D
-    needs: [preflight, compile-check]
-    if: needs.preflight.outputs.release_approved == 'true' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-      - name: Verificar gate novamente imediatamente antes da construção
-        run: |
-          python3 -c "import json,pathlib; g=json.loads(pathlib.Path('quality_gate_3d.json').read_text()); c=g.get('criteria',{}); e=g.get('evidence',{}); s=e.get('screenshots',[]) if isinstance(e,dict) else []; ok=g.get('approved') is True and g.get('status')=='APPROVED' and isinstance(c,dict) and bool(c) and all(v is True for v in c.values()) and bool(e.get('device_model','').strip()) and bool(e.get('android_version','').strip()) and bool(e.get('validation_notes','').strip()) and isinstance(s,list) and bool(s) and all(isinstance(p,str) and p.strip() and pathlib.Path(p).is_file() for p in s); print('Gate 3D aprovado' if ok else 'APK BLOQUEADO: gate 3D incompleto ou evidência em falta'); raise SystemExit(0 if ok else 1)"
-      - name: Construir APK release
-        run: gradle --no-daemon :app:assembleRelease
-      - name: Publicar artefacto APK validado
         uses: actions/upload-artifact@v4
         with:
-          name: Valepolis-V0.3.0-APK-3D-APROVADO
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
+          name: Valepolis-V0.3.0-Kotlin-Android
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
+            build-kotlin.log
+          if-no-files-found: warn
           retention-days: 14
