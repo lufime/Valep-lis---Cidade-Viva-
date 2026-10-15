@@ -1,0 +1,158 @@
+name: Valepólis V0.3.0 — PRE-FLIGHT, APK DEBUG e RELEASE bloqueada
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valepolis-v030-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-debug:
+    name: Localizar, auditar, construir e publicar APK DEBUG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Localizar projeto Android na raiz, subpastas ou ZIP
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vp-extract"
+          found=""
+          while IFS= read -r f; do
+            d="$(dirname "$f")"
+            if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break; fi
+          done < <(find . -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' -print)
+          if [[ -z "$found" ]]; then
+            while IFS= read -r z; do
+              dest="$RUNNER_TEMP/vp-extract/$(basename "$z" .zip)"
+              mkdir -p "$dest"
+              unzip -oq "$z" -d "$dest" || continue
+              while IFS= read -r f; do
+                d="$(dirname "$f")"
+                if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break 2; fi
+              done < <(find "$dest" -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path '*/.gradle/*' -print)
+            done < <(find . -type f -iname '*.zip' -not -path './.git/*' -print | sort)
+          fi
+          if [[ -z "$found" ]]; then
+            echo "::error::Projeto Android não encontrado na raiz, subpastas nem ZIPs."
+            find . -maxdepth 4 -type f -not -path './.git/*' | sort
+            exit 1
+          fi
+          echo "project_dir=$found" >> "$GITHUB_OUTPUT"
+          echo "Projeto Android encontrado: $found"
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Auditar estrutura e dados territoriais
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ["PROJECT_DIR"])
+          required=[
+            root/"settings.gradle.kts",
+            root/"app/build.gradle.kts",
+            root/"app/src/main/AndroidManifest.xml",
+          ]
+          for p in required:
+            if not p.is_file():
+              raise SystemExit(f"FAIL | Ficheiro obrigatório em falta: {p}")
+          assets=root/"app/src/main/assets"
+          def find_json(name):
+            matches=list(assets.rglob(name)) if assets.exists() else []
+            if not matches: raise SystemExit(f"FAIL | JSON não encontrado: {name}")
+            try: return json.loads(matches[0].read_text(encoding="utf-8"))
+            except Exception as e: raise SystemExit(f"FAIL | JSON inválido {name}: {e}")
+          b=find_json("bairros_valepolis.json")
+          ns=b.get("neighborhoods") if isinstance(b,dict) else None
+          if b.get("city")!="Valepólis" or b.get("neighborhood_count")!=25 or not isinstance(ns,list) or len(ns)!=25:
+            raise SystemExit("FAIL | Dados dos 25 bairros não passaram a validação.")
+          ids=[x.get("id") for x in ns if isinstance(x,dict)]
+          names=[x.get("name") for x in ns if isinstance(x,dict)]
+          if len(ids)!=25 or len(set(ids))!=25 or len(names)!=25 or len(set(names))!=25 or not all(isinstance(n,str) and n.strip() for n in names):
+            raise SystemExit("FAIL | IDs ou nomes dos bairros inválidos/duplicados.")
+          lim=find_json("limites_bairros_v030.json")
+          geoms=lim.get("neighborhoods") if isinstance(lim,dict) else None
+          if lim.get("neighborhood_count")!=25 or not isinstance(geoms,list) or len(geoms)!=25:
+            raise SystemExit("FAIL | Os 25 limites territoriais não passaram a validação.")
+          print("PASS | Estrutura Android")
+          print("PASS | 25 bairros com IDs e nomes únicos")
+          print("PASS | 25 geometrias territoriais")
+          PY
+
+      - name: Compilar Kotlin
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: cd "$PROJECT_DIR" && gradle --no-daemon --stacktrace :app:compileDebugKotlin
+
+      - name: Construir APK DEBUG para validação no telemóvel
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          gradle --no-daemon --stacktrace :app:assembleDebug
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+          echo "APK DEBUG criada: $PROJECT_DIR/$APK"
+          ls -lh "$APK" "$APK.sha256"
+
+      - name: Publicar APK DEBUG para validação visual
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-DEBUG-VALIDACAO-3D-NAO-RELEASE
+          path: |
+            ${{ steps.locate.outputs.project_dir }}/app/build/outputs/apk/debug/app-debug.apk
+            ${{ steps.locate.outputs.project_dir }}/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Registar que a APK de lançamento permanece bloqueada
+        if: always()
+        shell: bash
+        run: |
+          echo "APK DEBUG: destinada apenas a testes no telemóvel."
+          echo "APK RELEASE: BLOQUEADA até validação visual real e aprovação documentada do 3D."
+
+  release:
+    name: APK RELEASE — só após aprovação formal do 3D
+    needs: build-debug
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Bloqueado por regra de qualidade."
