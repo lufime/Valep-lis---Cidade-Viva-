@@ -1,0 +1,117 @@
+name: Valepólis V0.3.0 — Gerar APK DEBUG (release bloqueada)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valepolis-v030-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug-apk:
+    name: Construir e publicar APK DEBUG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Obter repositório
+        uses: actions/checkout@v4
+
+      - name: Encontrar e extrair projeto Android
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          extract="$RUNNER_TEMP/valepolis-project"
+          mkdir -p "$extract"
+          found=""
+          while IFS= read -r f; do
+            d="$(dirname "$f")"
+            if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break; fi
+          done < <(find . -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' -print)
+          if [[ -z "$found" ]]; then
+            while IFS= read -r archive; do
+              dest="$extract/$(basename "$archive" .zip)"
+              mkdir -p "$dest"
+              unzip -oq "$archive" -d "$dest" || continue
+              while IFS= read -r f; do
+                d="$(dirname "$f")"
+                if [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]]; then found="$d"; break 2; fi
+              done < <(find "$dest" -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path '*/.gradle/*' -print)
+            done < <(find . -type f -iname '*.zip' -not -path './.git/*' -print | sort)
+          fi
+          if [[ -z "$found" ]]; then
+            echo "::error::Não encontrei settings.gradle(.kts) e app/build.gradle(.kts), nem no repositório nem nos ZIPs."
+            find . -maxdepth 4 -type f -not -path './.git/*' | sort
+            exit 1
+          fi
+          echo "dir=$found" >> "$GITHUB_OUTPUT"
+          echo "Projeto selecionado: $found"
+          test -f "$found/gradlew" && echo "Wrapper Gradle encontrado" || echo "Sem wrapper Gradle; será usado Gradle instalado."
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar SDK 35 e Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Gerar APK DEBUG
+        id: build
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          if [[ -f ./gradlew ]]; then
+            chmod +x ./gradlew
+            ./gradlew --no-daemon --stacktrace :app:assembleDebug
+          else
+            gradle --no-daemon --stacktrace :app:assembleDebug
+          fi
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          if [[ ! -s "$APK" ]]; then
+            echo "::error::Gradle terminou sem criar app-debug.apk no caminho esperado."
+            find "$PROJECT_DIR/app/build/outputs" -maxdepth 6 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          sha256sum "$APK" > "$APK.sha256"
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK" "$APK.sha256"
+
+      - name: Publicar artefacto APK DEBUG
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-DEBUG-VALIDACAO-3D-NAO-RELEASE
+          path: |
+            ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+            ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Gate de lançamento
+        if: always()
+        shell: bash
+        run: |
+          echo "APK DEBUG: apenas para validação no telemóvel."
+          echo "APK RELEASE: BLOQUEADA até aprovação visual e técnica documentada do mundo 3D."

@@ -1,0 +1,109 @@
+name: Valepólis V0.3.0 — Kotlin Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valepolis-kotlin-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Validar e compilar APK Kotlin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v5
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Instalar componentes Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Validar estrutura Kotlin (sem Godot)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/pt/valepolis/quandotocaasirene/MainActivity.kt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = Path('app/src/main/assets/data')
+          required = ['bairros_valepolis.json', 'populacao_valepolis.json', 'episodes_200.json']
+          for name in required:
+              p = data / name
+              assert p.is_file(), f'Falta recurso: {name}'
+              json.loads(p.read_text(encoding='utf-8'))
+          bad = [str(p) for p in Path('.').rglob('*') if p.is_file() and (p.name == 'project.godot' or p.suffix == '.gd') and '.git' not in p.parts]
+          assert not bad, f'Resíduos Godot encontrados: {bad[:10]}'
+          print('PASS | Estrutura Kotlin e JSON principais válidos')
+          PY
+      - name: Bloquear APK enquanto o 3D não estiver aprovado a 100%
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('quality_gate_3d.json')
+          if not p.is_file():
+              raise SystemExit('FAIL | Falta quality_gate_3d.json; APK bloqueado.')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          if d.get('approved') is not True or d.get('status') != 'APPROVED':
+              raise SystemExit('BLOCKED | O 3D ainda não foi aprovado. APK não será compilado nem publicado.')
+          criteria = d.get('criteria', {})
+          missing = [k for k, v in criteria.items() if v is not True]
+          evidence = d.get('evidence', {})
+          if missing:
+              raise SystemExit('BLOCKED | Critérios por validar: ' + ', '.join(missing))
+          if not evidence.get('device_model') or not evidence.get('android_version') or not evidence.get('screenshots') or not evidence.get('validation_notes'):
+              raise SystemExit('BLOCKED | Falta evidência de validação visual real em Android.')
+          print('PASS | Aprovação e evidência declaradas; a validação visual continua a exigir revisão humana.')
+          PY
+      - name: Compilar APK debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace clean :app:assembleDebug 2>&1 | tee build-kotlin.log
+      - name: Verificar APK e SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
+      - name: Publicar APK e log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-Kotlin-Android
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
+            build-kotlin.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,178 @@
+name: Valepólis V0.3.0 — DEM geográfico e APK de diagnóstico
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_zip:
+        description: 'Caminho exato do ZIP do projeto Android no repositório'
+        required: true
+        type: string
+      dem_tile:
+        description: 'Tile Copernicus DEM de referência do relevo de Setúbal (1° x 1°; N38_00_W009_00)'
+        required: true
+        default: 'N38_00_W009_00'
+        type: string
+  push:
+    paths:
+      - '.github/workflows/INTEGRAR-DEM-COPERNICUS.yml'
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valepolis-dem-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dem-and-build:
+    name: Validar DEM, compilar APK e publicar diagnóstico
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Obter repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar ferramentas geoespaciais
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin python3 unzip
+          gdalinfo --version
+
+      - name: Validar e extrair ZIP selecionado
+        id: source
+        shell: bash
+        env:
+          REQUESTED_ZIP: ${{ inputs.project_zip }}
+        run: |
+          set -euo pipefail
+          [[ -f "$REQUESTED_ZIP" ]] || { echo "::error::ZIP indicado não existe: $REQUESTED_ZIP"; exit 1; }
+          unzip -Z1 "$REQUESTED_ZIP" | grep -qE '(^|/)app/src/main/java/.*/MainActivity\.kt$' || { echo '::error::O ZIP não contém MainActivity.kt Android.'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/valepolis-project"
+          unzip -oq "$REQUESTED_ZIP" -d "$RUNNER_TEMP/valepolis-project"
+          mapfile -t roots < <(find "$RUNNER_TEMP/valepolis-project" -type f \( -name settings.gradle.kts -o -name settings.gradle \) -not -path '*/.gradle/*' -print | while read -r f; do d="$(dirname "$f")"; [[ -f "$d/app/build.gradle.kts" || -f "$d/app/build.gradle" ]] && echo "$d"; done)
+          [[ "${#roots[@]}" -eq 1 ]] || { echo "::error::Esperada uma raiz Android; encontradas ${#roots[@]}"; printf '%s\n' "${roots[@]:-nenhuma}"; exit 1; }
+          project="${roots[0]}"
+          grep -Rqs --include='*.kt' --include='*.java' 'terrain_reference_dem.asc' "$project/app/src/main/java" || { echo '::error::Não foi encontrado carregador de terrain_reference_dem.asc'; exit 1; }
+          echo "dir=$project" >> "$GITHUB_OUTPUT"
+          echo "Raiz Android: $project"
+
+      - name: Descarregar tile Copernicus DEM selecionado
+        env:
+          DEM_TILE: ${{ inputs.dem_tile }}
+        run: |
+          set -euo pipefail
+          [[ "$DEM_TILE" =~ ^N[0-9]{2}_[0-9]{2}_W[0-9]{3}_[0-9]{2}$|^N[0-9]{2}_[0-9]{2}_E[0-9]{3}_[0-9]{2}$|^S[0-9]{2}_[0-9]{2}_W[0-9]{3}_[0-9]{2}$|^S[0-9]{2}_[0-9]{2}_E[0-9]{3}_[0-9]{2}$ ]] || { echo '::error::Formato do tile inválido.'; exit 1; }
+          # O endpoint público GLO-90 usa este padrão de nome de objeto;
+          # o tile de Setúbal é N38_00_W009_00 (38–39 N, 9–8 W).
+          name="Copernicus_DSM_COG_30_${DEM_TILE}_DEM"
+          url="https://copernicus-dem-90m.s3.eu-central-1.amazonaws.com/${name}/${name}.tif"
+          echo "Fonte DEM: $url"
+          curl --fail --show-error --location --retry 4 --retry-all-errors --connect-timeout 20 "$url" -o "$RUNNER_TEMP/copernicus_dem.tif"
+          test -s "$RUNNER_TEMP/copernicus_dem.tif"
+          gdalinfo "$RUNNER_TEMP/copernicus_dem.tif" > "$RUNNER_TEMP/dem-gdalinfo.txt"
+          sed -n '1,40p' "$RUNNER_TEMP/dem-gdalinfo.txt"
+          # Bloqueia um tile de outra região quando se escolheu Setúbal.
+          if [[ "$DEM_TILE" == "N38_00_W009_00" ]]; then
+            grep -Eq 'Origin = \(-9\.[0-9]+,39\.[0-9]+' "$RUNNER_TEMP/dem-gdalinfo.txt" || { echo '::error::O DEM descarregado não corresponde ao tile N38/W009 de Setúbal.'; exit 1; }
+          fi
+
+      - name: Converter e validar grelha DEM offline
+        env:
+          PROJECT_DIR: ${{ steps.source.outputs.dir }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROJECT_DIR/app/src/main/assets/data"
+          gdal_translate -q -of AAIGrid -outsize 129 129 -a_nodata -9999 "$RUNNER_TEMP/copernicus_dem.tif" "$PROJECT_DIR/app/src/main/assets/data/terrain_reference_dem.asc"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, math
+          p=Path(os.environ['PROJECT_DIR'])/'app/src/main/assets/data/terrain_reference_dem.asc'
+          lines=p.read_text().splitlines()
+          assert len(lines)>=135, f'DEM demasiado curto: {len(lines)} linhas'
+          header={}
+          for line in lines[:6]:
+              parts=line.split(); assert len(parts)==2, f'Cabeçalho inválido: {line}'
+              header[parts[0].lower()]=parts[1]
+          assert int(header['ncols'])==129 and int(header['nrows'])==129, header
+          rows=lines[6:]; assert len(rows)==129, f'{len(rows)} linhas de dados, esperadas 129'
+          vals=[]
+          for i,row in enumerate(rows):
+              a=[float(x) for x in row.split()]
+              assert len(a)==129, f'Linha {i}: {len(a)} colunas'
+              vals.extend(a)
+          nodata=float(header.get('nodata_value','-9999'))
+          valid=[v for v in vals if math.isfinite(v) and v>nodata+0.001]
+          assert valid and max(valid)-min(valid)>0.1, 'DEM sem variação de altitude válida'
+          print(f'DEM validado: 129x129; mínimo={min(valid):.2f}m; máximo={max(valid):.2f}m; ficheiro={p.stat().st_size} bytes')
+          PY
+
+      - name: Configurar Java e Android SDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Instalar plataforma e Build Tools
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK DEBUG
+        env:
+          PROJECT_DIR: ${{ steps.source.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          set +e
+          if [[ -f gradlew ]]; then
+            chmod +x gradlew
+            ./gradlew --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-debug.log"
+            result=${PIPESTATUS[0]}
+          else
+            gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-debug.log"
+            result=${PIPESTATUS[0]}
+          fi
+          set -e
+          [[ "$result" -eq 0 ]] || exit "$result"
+          apk="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp "$apk" "$GITHUB_WORKSPACE/output/Valepolis-V0.3.0-DEBUG-DEM.apk"
+          cp "$PROJECT_DIR/app/src/main/assets/data/terrain_reference_dem.asc" "$GITHUB_WORKSPACE/output/"
+          cp "$RUNNER_TEMP/dem-gdalinfo.txt" "$GITHUB_WORKSPACE/output/"
+          sha256sum "$GITHUB_WORKSPACE/output/"* > "$GITHUB_WORKSPACE/output/SHA256.txt"
+
+      - name: Publicar APK e diagnóstico
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-DEM-DEBUG
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publicar logs se falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valepolis-V0.3.0-DEM-LOGS
+          path: |
+            build-debug.log
+            ${{ runner.temp }}/dem-gdalinfo.txt
+            ${{ runner.temp }}/copernicus_dem.tif
+          if-no-files-found: ignore
+          retention-days: 7
