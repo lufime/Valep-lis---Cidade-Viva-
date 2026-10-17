@@ -1,0 +1,215 @@
+name: A Última Expedição v0.9.1 — Testes de protocolo e APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    # Permite iniciar em qualquer branch; não fica limitado a main/master.
+    branches:
+      - '**'
+    # Sem filtro paths: qualquer commit inicia o workflow, incluindo alterações
+    # ao próprio workflow e ao ZIP do jogo.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultima-expedicao-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Descompactar projeto e compilar APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Obter repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Localizar e descompactar ZIP do jogo
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          EXPECTED_ZIP="A-Ultima-Expedicao-Android-v0.9.1.zip"
+          EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
+          mkdir -p "$EXTRACT_ROOT"
+
+          ZIP_PATH="$(find "$GITHUB_WORKSPACE" -type f -name "$EXPECTED_ZIP" -not -path '*/.git/*' -print -quit || true)"
+
+          # Se o ZIP tiver outro nome, identificar pela estrutura Capacitor.
+          if [[ -z "$ZIP_PATH" ]]; then
+            while IFS= read -r -d '' candidate; do
+              probe="$RUNNER_TEMP/zip-probe"
+              rm -rf "$probe"
+              mkdir -p "$probe"
+              if unzip -tq "$candidate" >/dev/null 2>&1 && unzip -oq "$candidate" -d "$probe"; then
+                package_file="$(find "$probe" -type f -name package.json -print -quit)"
+                if [[ -n "$package_file" ]]; then
+                  candidate_dir="$(dirname "$package_file")"
+                  if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
+                    ZIP_PATH="$candidate"
+                    break
+                  fi
+                fi
+              fi
+            done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0)
+          fi
+
+          if [[ -z "$ZIP_PATH" ]]; then
+            echo "::error::Não encontrei o ZIP do jogo. Coloca A-Ultima-Expedicao-Android-v0.9.1.zip no repositório GitHub e volta a executar."
+            find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
+            exit 1
+          fi
+
+          echo "ZIP encontrado: $ZIP_PATH"
+          unzip -tq "$ZIP_PATH"
+          unzip -oq "$ZIP_PATH" -d "$EXTRACT_ROOT"
+
+          PROJECT_DIR=""
+          while IFS= read -r -d '' package_file; do
+            candidate_dir="$(dirname "$package_file")"
+            if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
+              PROJECT_DIR="$candidate_dir"
+              break
+            fi
+          done < <(find "$EXTRACT_ROOT" -type f -name package.json -print0)
+          if [[ -z "$PROJECT_DIR" ]]; then
+            echo "::error::Não encontrei a raiz Capacitor (package.json + capacitor.config.json + www/index.html)."
+            find "$EXTRACT_ROOT" -maxdepth 5 -type f -print || true
+            exit 1
+          fi
+          for required in capacitor.config.json www/index.html; do
+            if [[ ! -s "$PROJECT_DIR/$required" ]]; then
+              echo "::error::Falta o ficheiro obrigatório $required no projeto descompactado."
+              exit 1
+            fi
+          done
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Projeto descompactado em: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Preparar Android SDK pré-instalado
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          fi
+          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then echo "::error::sdkmanager não encontrado"; exit 1; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --list_installed
+
+      - name: Validar projeto e instalar dependências
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+          node --version
+          npm --version
+          node -e "const p=require('./package.json'); if(!p.dependencies?.['@capacitor/core'] || !p.dependencies?.['@capacitor/android'] || !p.devDependencies?.['@capacitor/cli']) { console.error('Dependências Capacitor incompletas em package.json'); process.exit(1); } console.log('Projeto:', p.name, p.version)"
+          node -e "const c=require('./capacitor.config.json'); if(!c.appId || !c.appName || c.webDir !== 'www') { console.error('capacitor.config.json inválido: requer appId, appName e webDir=www'); process.exit(1); } console.log('Capacitor:', c.appId, '-', c.appName)"
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Testes automatizados do protocolo
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+          npm test
+
+      - name: Criar projeto Android
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+          npx cap add android
+
+      - name: Sincronizar recursos
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+          npx cap sync android
+
+      - name: Validar registo e imports do módulo nativo Nearby
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+          test -s www/js/nearby-bridge.bundle.js
+          python3 scripts/register-nearby-android.py
+          PLUGIN_JAVA="$PROJECT_DIR/node_modules/capacitor-nearby-link/android/src/main/java/pt/ultimaexpedicao/nearby/NearbyLinkPlugin.java"
+          test -s "$PLUGIN_JAVA"
+          grep -q 'import com.getcapacitor.annotation.CapacitorPlugin;' "$PLUGIN_JAVA"
+          grep -q 'import com.getcapacitor.annotation.Permission;' "$PLUGIN_JAVA"
+          grep -q 'import com.getcapacitor.annotation.PermissionCallback;' "$PLUGIN_JAVA"
+          echo "Imports das anotações Capacitor verificados."
+
+      - name: Compilar APK de depuração
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR/android"
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          mkdir -p "$RUNNER_TEMP/ultima-expedicao-artifacts"
+          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.9.1-debug.apk"
+          ls -lh "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.9.1-debug.apk"
+
+      - name: Publicar APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-Android-v0.9.1-debug
+          path: ${{ runner.temp }}/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.9.1-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Guardar diagnóstico se falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-diagnostico
+          path: |
+            ${{ runner.temp }}/ultima-expedicao/
+            ${{ runner.temp }}/zip-probe/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Resumo
+        if: always()
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## A Última Expedição v0.9.1 - resultado"
+            echo ""
+            echo "- Estado: **$JOB_STATUS**"
+            echo "- O workflow procura e descompacta o ZIP antes da compilação."
+            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.9.1-debug.apk" ]]; then
+              echo "- APK gerada e verificada como ficheiro não vazio."
+            else
+              echo "- APK não confirmada; consultar a etapa que falhou."
+            fi
+            echo "- A compilação não substitui o teste de instalação num telemóvel."
+          } >> "$GITHUB_STEP_SUMMARY"
