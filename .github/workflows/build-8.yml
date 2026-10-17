@@ -97,6 +97,12 @@ jobs:
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Não incluir "tools": esse pacote antigo já não existe no SDK atual.
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
       - name: Validar projeto e instalar dependências
         shell: bash
