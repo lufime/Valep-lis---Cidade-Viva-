@@ -283,13 +283,17 @@ jobs:
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Evita o pacote obsoleto "tools", que já não existe nos repositórios SDK.
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
 
       - name: Instalar componentes Android
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          sdkmanager --licenses
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
