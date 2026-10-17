@@ -1,13 +1,13 @@
-name: A Última Expedição — Descompactar ZIP e gerar APK Android
+name: A Ultima Expedicao - Descompactar ZIP e gerar APK Android
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-    paths:
-      - '**.zip'
-      - '**/*.zip'
-      - '.github/workflows/android-apk.yml'
+    # Permite iniciar em qualquer branch; não fica limitado a main/master.
+    branches:
+      - '**'
+    # Sem filtro paths: qualquer commit inicia o workflow, incluindo alterações
+    # ao próprio workflow e ao ZIP do jogo.
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-android:
-    name: Descompactar projeto, validar e compilar APK
+    name: Descompactar projeto e compilar APK
     runs-on: ubuntu-24.04
     timeout-minutes: 35
 
@@ -29,7 +29,6 @@ jobs:
           fetch-depth: 1
 
       - name: Localizar e descompactar ZIP do jogo
-        id: extract
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,7 +38,7 @@ jobs:
 
           ZIP_PATH="$(find "$GITHUB_WORKSPACE" -type f -name "$EXPECTED_ZIP" -not -path '*/.git/*' -print -quit || true)"
 
-          # Se o nome oficial não existir, detetar um ZIP que contenha o projeto Capacitor.
+          # Se o ZIP tiver outro nome, identificar pela estrutura Capacitor.
           if [[ -z "$ZIP_PATH" ]]; then
             while IFS= read -r -d '' candidate; do
               probe="$RUNNER_TEMP/zip-probe"
@@ -59,12 +58,12 @@ jobs:
           fi
 
           if [[ -z "$ZIP_PATH" ]]; then
-            echo "::error::Não encontrei o ZIP do jogo no repositório. Envia A-Ultima-Expedicao-Android-v0.1.0.zip para a raiz ou uma subpasta do repositório."
+            echo "::error::Não encontrei o ZIP do jogo. Coloca A-Ultima-Expedicao-Android-v0.1.0.zip no repositório GitHub e volta a executar."
             find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
             exit 1
           fi
 
-          echo "ZIP selecionado: $ZIP_PATH"
+          echo "ZIP encontrado: $ZIP_PATH"
           unzip -tq "$ZIP_PATH"
           unzip -oq "$ZIP_PATH" -d "$EXTRACT_ROOT"
 
@@ -73,10 +72,11 @@ jobs:
             echo "::error::O ZIP foi descompactado, mas não contém package.json."
             exit 1
           fi
+
           PROJECT_DIR="$(dirname "$PACKAGE_FILE")"
           for required in capacitor.config.json www/index.html; do
             if [[ ! -s "$PROJECT_DIR/$required" ]]; then
-              echo "::error::Falta o ficheiro obrigatório $required dentro do ZIP descompactado."
+              echo "::error::Falta o ficheiro obrigatório $required no projeto descompactado."
               exit 1
             fi
           done
@@ -110,14 +110,14 @@ jobs:
           npm install --no-audit --no-fund
           npm run build
 
-      - name: Gerar projeto Android
+      - name: Criar projeto Android
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
           npx cap add android
 
-      - name: Sincronizar recursos do jogo
+      - name: Sincronizar recursos
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -146,7 +146,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Guardar diagnóstico em caso de falha
+      - name: Guardar diagnóstico se falhar
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -157,21 +157,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Resumo da execução
+      - name: Resumo
         if: always()
         shell: bash
         env:
           JOB_STATUS: ${{ job.status }}
         run: |
           {
-            echo "## A Última Expedição — resultado"
+            echo "## A Última Expedição - resultado"
             echo ""
-            echo "- Estado do job: **$JOB_STATUS**"
-            echo "- O workflow procura e descompacta automaticamente o ZIP antes de instalar dependências."
+            echo "- Estado: **$JOB_STATUS**"
+            echo "- O workflow procura e descompacta o ZIP antes da compilação."
             if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.1.0-debug.apk" ]]; then
               echo "- APK gerada e verificada como ficheiro não vazio."
             else
-              echo "- APK não confirmada; consultar a etapa que falhou e o artefacto de diagnóstico."
+              echo "- APK não confirmada; consultar a etapa que falhou."
             fi
-            echo "- A compilação não substitui o teste de instalação num dispositivo Android."
+            echo "- A compilação não substitui o teste de instalação num telemóvel."
           } >> "$GITHUB_STEP_SUMMARY"
