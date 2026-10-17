@@ -32,49 +32,31 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          EXPECTED_ZIP="A-Ultima-Expedicao-Android-v0.10.0.zip"
           EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
           mkdir -p "$EXTRACT_ROOT"
-
           ZIP_PATH=""
 
-          # Primeiro tenta o nome histórico; se não existir, procura qualquer ZIP
-          # que contenha um projeto Capacitor válido. O nome do ZIP pode incluir
-          # versões como v0.10.1-WIFI-PERMISSIONS.
-          exact="$(find "$GITHUB_WORKSPACE" -type f -name "$EXPECTED_ZIP" -not -path '*/.git/*' -print -quit || true)"
-          candidates=()
-          if [[ -n "$exact" ]]; then candidates+=("$exact"); fi
+          # Não exige que o ZIP tenha um nome fixo nem que os ficheiros estejam
+          # na raiz do arquivo. Verifica os caminhos reais dentro de cada ZIP.
           while IFS= read -r -d '' candidate; do
-            [[ "$candidate" == "$exact" ]] && continue
-            candidates+=("$candidate")
-          done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0 | sort -z -r)
-
-          for candidate in "${candidates[@]}"; do
-            if ! unzip -tq "$candidate" >/dev/null 2>&1; then
-              echo "ZIP ignorado (arquivo inválido): $candidate"
-              continue
+            echo "A verificar ZIP: $candidate"
+            unzip -tq "$candidate" >/dev/null 2>&1 || { echo "ZIP inválido: $candidate"; continue; }
+            listing="$(unzip -Z1 "$candidate" 2>/dev/null || true)"
+            if grep -Eq '(^|/)package.json$' <<< "$listing" \
+              && grep -Eq '(^|/)capacitor.config.json$' <<< "$listing" \
+              && grep -Eq '(^|/)www/index.html$' <<< "$listing"; then
+              ZIP_PATH="$candidate"
+              break
             fi
-            probe="$RUNNER_TEMP/zip-probe"
-            rm -rf "$probe"
-            mkdir -p "$probe"
-            if ! unzip -oq "$candidate" -d "$probe"; then continue; fi
-            package_file="$(find "$probe" -type f -name package.json -print -quit)"
-            if [[ -n "$package_file" ]]; then
-              candidate_dir="$(dirname "$package_file")"
-              if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
-                ZIP_PATH="$candidate"
-                break
-              fi
-            fi
-          done
+          done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0 | sort -z)
 
           if [[ -z "$ZIP_PATH" ]]; then
-            echo "::error::Não encontrei nenhum ZIP válido do jogo. Coloca o ZIP completo A-Ultima-Expedicao-Android-v*.zip na raiz do repositório."
+            echo "::error::Nenhum ZIP contém package.json, capacitor.config.json e www/index.html. ZIPs encontrados:"
             find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
             exit 1
           fi
 
-          echo "ZIP encontrado: $ZIP_PATH"
+          echo "ZIP selecionado: $ZIP_PATH"
           unzip -tq "$ZIP_PATH"
           unzip -oq "$ZIP_PATH" -d "$EXTRACT_ROOT"
 
@@ -87,18 +69,12 @@ jobs:
             fi
           done < <(find "$EXTRACT_ROOT" -type f -name package.json -print0)
           if [[ -z "$PROJECT_DIR" ]]; then
-            echo "::error::Não encontrei a raiz Capacitor (package.json + capacitor.config.json + www/index.html)."
+            echo "::error::O ZIP contém os ficheiros esperados, mas não foi possível identificar a pasta do projeto após extração."
             find "$EXTRACT_ROOT" -maxdepth 5 -type f -print || true
             exit 1
           fi
-          for required in capacitor.config.json www/index.html; do
-            if [[ ! -s "$PROJECT_DIR/$required" ]]; then
-              echo "::error::Falta o ficheiro obrigatório $required no projeto descompactado."
-              exit 1
-            fi
-          done
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Projeto descompactado em: $PROJECT_DIR"
+          echo "Projeto identificado em: $PROJECT_DIR"
           ls -la "$PROJECT_DIR"
 
       - name: Configurar Node.js
