@@ -97,12 +97,18 @@ jobs:
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          # Não incluir "tools": esse pacote antigo já não existe no SDK atual.
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+
+      - name: Instalar pacotes Android SDK
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SDKMANAGER="$(find \"${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}/cmdline-tools\" -type f -name sdkmanager -print -quit)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "::error::Não foi encontrado sdkmanager no Android SDK."
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Validar projeto e instalar dependências
         shell: bash
