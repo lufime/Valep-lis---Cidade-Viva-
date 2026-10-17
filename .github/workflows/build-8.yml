@@ -1,0 +1,278 @@
+name: "Valepólis V0.3.0 — PRE-FLIGHT e APK Android"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "**"
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valepolis-v030-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.5-stable"
+  APK_NAME: "Quando-Toca-a-Sirene-V0.3.0.apk"
+
+jobs:
+  preflight-and-apk:
+    name: "Auditar projeto, executar PRE-FLIGHT e exportar APK"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Obter repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Instalar dependências Android
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar ferramentas necessárias
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unzip zip jq
+          mkdir -p "$RUNNER_TEMP/godot" "$RUNNER_TEMP/artifacts"
+
+      - name: Localizar projeto Godot (raiz, subpastas ou ZIP)
+        id: locate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/extracted"
+          PROJECT_FILE=""
+
+          # Primeiro, procurar um projeto já extraído no repositório.
+          while IFS= read -r -d '' candidate; do
+            if [[ -f "$(dirname "$candidate")/project.godot" ]]; then
+              PROJECT_FILE="$(dirname "$candidate")/project.godot"
+              break
+            fi
+          done < <(find "$GITHUB_WORKSPACE" -type f \( -name project.godot -o -name PROJECT.GODOT \) -not -path '*/.git/*' -print0)
+
+          # Se não existir project.godot, procurar ZIPs que contenham o projeto.
+          if [[ -z "$PROJECT_FILE" ]]; then
+            while IFS= read -r -d '' archive; do
+              dest="$RUNNER_TEMP/extracted/$(basename "$archive" .zip)"
+              mkdir -p "$dest"
+              if unzip -oq "$archive" -d "$dest"; then
+                found="$(find "$dest" -type f \( -name project.godot -o -name PROJECT.GODOT \) -print -quit)"
+                if [[ -n "$found" ]]; then
+                  PROJECT_FILE="$found"
+                  break
+                fi
+              fi
+            done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0)
+          fi
+
+          if [[ -z "$PROJECT_FILE" ]]; then
+            echo "::error::Não foi encontrado project.godot na raiz, nas subpastas ou em nenhum ZIP do repositório."
+            echo "Conteúdo relevante encontrado:"
+            find "$GITHUB_WORKSPACE" -maxdepth 4 -type f \( -name '*.zip' -o -name 'project.godot' -o -name 'export_presets.cfg' \) -print | head -200 || true
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Projeto Godot encontrado em: $PROJECT_DIR"
+          test -f "$PROJECT_DIR/project.godot"
+          if [[ ! -f "$PROJECT_DIR/export_presets.cfg" ]]; then
+            echo "::error::O projeto foi encontrado, mas falta export_presets.cfg. Configure o preset Android no Godot antes de exportar."
+            exit 1
+          fi
+
+      - name: Validar ficheiros e configuração Android
+        id: validate
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+
+          echo "=== Ficheiros essenciais ==="
+          test -s project.godot || { echo "::error::project.godot está vazio ou ausente."; exit 1; }
+          test -s export_presets.cfg || { echo "::error::export_presets.cfg está vazio ou ausente."; exit 1; }
+
+          echo "=== Presets de exportação declarados ==="
+          grep -nE '^\[preset\.|^name=|^platform=|^export_filter=' export_presets.cfg || true
+
+          # O nome é extraído do primeiro preset cuja plataforma seja Android.
+          PRESET_NAME="$(
+            awk '
+              /^\[preset\.[0-9]+\]$/ { in_preset=1; name=""; platform=""; next }
+              /^\[/ { if (in_preset && platform == "Android" && name != "") { print name; exit }; in_preset=0 }
+              in_preset && /^name=/ { name=$0; sub(/^name="/,"",name); sub(/"$/,"",name) }
+              in_preset && /^platform=/ { platform=$0; sub(/^platform="/,"",platform); sub(/"$/,"",platform) }
+              END { if (in_preset && platform == "Android" && name != "") print name }
+            ' export_presets.cfg | head -n 1
+          )"
+
+          if [[ -z "$PRESET_NAME" ]]; then
+            echo "::error::Não existe um preset de exportação com platform=\"Android\" em export_presets.cfg."
+            exit 1
+          fi
+
+          echo "preset_name=$PRESET_NAME" >> "$GITHUB_OUTPUT"
+          echo "Preset Android: $PRESET_NAME"
+
+          if ! grep -qE '^\[application\]' project.godot; then
+            echo "::warning::Não foi encontrada a secção [application] em project.godot; confirmar configuração do projeto."
+          fi
+
+          # Inventaria recursos grandes e ficheiros-chave sem alterar o projeto.
+          echo "=== Inventário ==="
+          find . -maxdepth 3 -type f \( -name '*.gd' -o -name '*.tscn' -o -name '*.tres' -o -name '*.res' -o -name '*.blend' -o -name '*.glb' -o -name '*.gltf' \) | head -250 || true
+
+      - name: Descarregar Godot e templates Android
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GODOT_ZIP="$RUNNER_TEMP/godot/godot.zip"
+          TEMPLATES_TPZ="$RUNNER_TEMP/godot/templates.tpz"
+
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" \
+            --output "$GODOT_ZIP"
+          unzip -oq "$GODOT_ZIP" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v*_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "$GODOT_BIN" > "$RUNNER_TEMP/godot/bin-path.txt"
+
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
+            --output "$TEMPLATES_TPZ"
+
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}"
+          mkdir -p "$TEMPLATE_DIR" "$RUNNER_TEMP/godot/template-unpack"
+          unzip -oq "$TEMPLATES_TPZ" -d "$RUNNER_TEMP/godot/template-unpack"
+          TEMPLATE_SOURCE="$(find "$RUNNER_TEMP/godot/template-unpack" -type f -name 'android_debug.apk' -printf '%h\n' -quit)"
+          if [[ -z "$TEMPLATE_SOURCE" ]]; then
+            echo "::error::Os templates descarregados não contêm android_debug.apk."
+            exit 1
+          fi
+          cp -a "$TEMPLATE_SOURCE"/. "$TEMPLATE_DIR"/
+          "$GODOT_BIN" --version
+
+      - name: Configurar SDK Android para Godot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [[ -z "$SDK" || ! -d "$SDK" ]]; then
+            echo "::error::O Android SDK não foi encontrado após setup-android."
+            exit 1
+          fi
+
+          # Instalar componentes habituais usados pelo exportador Android do Godot.
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmdline-tools;latest"
+          echo "ANDROID_HOME=$SDK"
+          echo "Godot export settings must point to this SDK and to a valid Java installation."
+
+      - name: Importar recursos e executar verificações Godot
+        id: preflight
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -Eeuo pipefail
+          GODOT_BIN="$(cat "$RUNNER_TEMP/godot/bin-path.txt")"
+          cd "$PROJECT_DIR"
+          mkdir -p "$RUNNER_TEMP/artifacts"
+
+          set +e
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --editor --import \
+            2>&1 | tee "$RUNNER_TEMP/artifacts/godot-import.log"
+          IMPORT_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [[ $IMPORT_STATUS -ne 0 ]]; then
+            echo "::error::A importação de recursos Godot falhou (código $IMPORT_STATUS)."
+            exit "$IMPORT_STATUS"
+          fi
+
+          # Verificação de arranque headless limitada no tempo; não substitui testes de jogo completos.
+          set +e
+          timeout 120 "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 5 \
+            2>&1 | tee "$RUNNER_TEMP/artifacts/godot-smoke-test.log"
+          SMOKE_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [[ $SMOKE_STATUS -ne 0 ]]; then
+            echo "::error::O teste de arranque headless falhou (código $SMOKE_STATUS)."
+            exit "$SMOKE_STATUS"
+          fi
+          echo "Importação e teste de arranque headless concluídos sem erro de processo."
+
+      - name: Exportar APK Android
+        id: export
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+          PRESET_NAME: ${{ steps.validate.outputs.preset_name }}
+        run: |
+          set -Eeuo pipefail
+          GODOT_BIN="$(cat "$RUNNER_TEMP/godot/bin-path.txt")"
+          APK_PATH="$RUNNER_TEMP/artifacts/$APK_NAME"
+          cd "$PROJECT_DIR"
+
+          set +e
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+            --export-debug "$PRESET_NAME" "$APK_PATH" \
+            2>&1 | tee "$RUNNER_TEMP/artifacts/godot-export.log"
+          EXPORT_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          if [[ $EXPORT_STATUS -ne 0 ]]; then
+            echo "::error::A exportação do APK falhou (código $EXPORT_STATUS)."
+            exit "$EXPORT_STATUS"
+          fi
+          if [[ ! -s "$APK_PATH" ]]; then
+            echo "::error::O comando terminou sem erro, mas o APK não existe ou está vazio."
+            exit 1
+          fi
+          ls -lh "$APK_PATH"
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar APK e relatórios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: valepolis-v030-preflight-apk-logs
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/artifacts/
+            ${{ runner.temp }}/godot-import.log
+            ${{ runner.temp }}/godot-smoke-test.log
+            ${{ runner.temp }}/godot-export.log
+
+      - name: Resumo do resultado
+        if: always()
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## Valepólis V0.3.0 — resultado do workflow"
+            echo ""
+            echo "- Estado do job: **$JOB_STATUS**"
+            echo "- Projeto: Godot $GODOT_VERSION"
+            echo "- APK esperada: \`$APK_NAME\`"
+            echo ""
+            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/artifacts/$APK_NAME" ]]; then
+              echo "- APK gerada e verificada: sim"
+              echo "- PRE-FLIGHT executado: importação de recursos e teste de arranque headless"
+              echo "- Nota: isto não comprova testes completos de jogabilidade nem validação em dispositivo físico."
+            else
+              echo "- APK gerada e verificada: não"
+              echo "- Ver os logs do artefacto para identificar a etapa que falhou."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
