@@ -60,6 +60,9 @@ jobs:
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # O pacote legado "tools" já não existe nos repositórios atuais do Android SDK.
+          packages: 'platform-tools;platforms;android-35;build-tools;35.0.0'
 
       - name: Instalar ferramentas e Godot 4.5
         shell: bash
