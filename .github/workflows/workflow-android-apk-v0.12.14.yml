@@ -134,12 +134,23 @@ jobs:
           cd "$PROJECT_DIR"
           npm test
 
-      - name: Criar projeto Android
+      - name: Preparar projeto Android existente
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
-          npx cap add android
+
+          # Não recriar nem apagar a pasta Android se já existir no ZIP.
+          if [[ ! -s android/gradlew || ! -s android/settings.gradle && ! -s android/settings.gradle.kts ]]; then
+            if [[ -d android ]]; then
+              echo "::error::A pasta android existe, mas não parece ser um projeto Gradle completo."
+              find android -maxdepth 3 -type f -print || true
+              exit 1
+            fi
+            npx cap add android
+          else
+            echo "Projeto Android existente detetado; será preservado."
+          fi
 
       - name: Sincronizar recursos
         shell: bash
