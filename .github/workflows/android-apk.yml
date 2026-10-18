@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          EXPECTED_ZIP="A-Ultima-Expedicao-Android-v0.12.9-INFLUENCIA-SECRETA.zip"
+          EXPECTED_ZIP="A-Ultima-Expedicao-Android-v0.12.14-INFLUENCIA-SECRETA.zip"
           EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
           mkdir -p "$EXTRACT_ROOT"
 
