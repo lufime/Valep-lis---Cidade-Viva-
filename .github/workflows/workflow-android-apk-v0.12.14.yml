@@ -36,16 +36,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Não usar android-actions/setup-android@v3 aqui:
-      # o log fornecido mostra que a action falha ao pedir o pacote obsoleto "tools".
-      # O runner ubuntu-24.04 já inclui Android SDK e sdkmanager.
-
       - name: Instalar Godot 4.5 e templates Android
         shell: bash
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y unzip zip xvfb
+          sudo apt-get install -y unzip zip curl
           mkdir -p "$RUNNER_TEMP/godot" "$RUNNER_TEMP/artifacts"
           curl --fail --location --retry 3 "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" -o "$RUNNER_TEMP/godot/godot.zip"
           unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot/bin"
@@ -67,46 +63,49 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          export ANDROID_HOME
-          export ANDROID_SDK_ROOT="$ANDROID_HOME"
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
-          if [[ -z "$SDKMANAGER" ]]; then
-            echo "ERRO: sdkmanager não encontrado em $ANDROID_HOME/cmdline-tools"
-            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager -print || true
-            exit 1
-          fi
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'cmdline-tools;latest'
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK_ROOT" || { echo "::error::Android SDK não encontrado: $SDK_ROOT"; exit 1; }
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          test -n "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado em $SDK_ROOT"; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'cmdline-tools;latest'
           mkdir -p "$HOME/.config/godot"
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF_SETTINGS
           [gd_resource type="EditorSettings" format=3]
           [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/android_sdk_path = "$SDK_ROOT"
           export/android/java_sdk_path = "$JAVA_HOME"
           EOF_SETTINGS
+          "$SDK_ROOT/platform-tools/adb" version || true
 
-      - name: Encontrar ZIP com projeto Godot
+      - name: Encontrar ZIP original do projeto Godot
         id: project
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p "$RUNNER_TEMP/extracted"
-          found=''
+          candidates=()
           while IFS= read -r -d '' z; do
+            name="$(basename "$z")"
+            # Não confundir pacotes de correção com o ZIP original do jogo.
+            if [[ "$name" =~ [Cc][Oo][Rr][Rr][Ii][Gg][Ii][Dd][Oo] || "$name" =~ [Cc][Oo][Rr][Rr][Ee][Cc][Aa][Oo] || "$name" =~ [Pp][Aa][Tt][Cc][Hh] ]]; then
+              echo "Ignorado ZIP de correção: $z"
+              continue
+            fi
             if unzip -Z1 "$z" | grep -Eq '(^|/)project\.godot$'; then
-              found="$z"
-              break
+              candidates+=("$z")
             fi
           done < <(find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print0)
-          if [[ -z "$found" ]]; then
-            echo 'ERRO: nenhum ZIP contém project.godot.'
-            echo 'ZIPs disponíveis:'
-            find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print || true
+          if [[ "${#candidates[@]}" -ne 1 ]]; then
+            echo "::error::Era esperado exatamente um ZIP original válido com project.godot; encontrados: ${#candidates[@]}"
+            printf 'Candidato: %s\n' "${candidates[@]:-nenhum}"
+            find "$GITHUB_WORKSPACE" -type f -name '*.zip' -printf '%p\n'
             exit 1
           fi
-          echo "ZIP selecionado: $found"
-          unzip -oq "$found" -d "$RUNNER_TEMP/extracted"
+          echo "ZIP original selecionado: ${candidates[0]}"
+          unzip -oq "${candidates[0]}" -d "$RUNNER_TEMP/extracted"
           PROJECT_FILE="$(find "$RUNNER_TEMP/extracted" -type f -name project.godot -print -quit)"
           test -n "$PROJECT_FILE"
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
@@ -129,15 +128,33 @@ jobs:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
           set -Eeuo pipefail
+          set +e
           timeout 120 "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 5 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-smoke-test.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -E '^(ERROR:|SCRIPT ERROR:|Parse Error:)' "$RUNNER_TEMP/artifacts/godot-smoke-test.log"; then
+            echo "::error::O teste de arranque reportou erros Godot."
+            exit 1
+          fi
+          test "$status" -eq 0
 
-      - name: Exportar APK de depuração
+      - name: Diagnosticar configuração do preset Android
         shell: bash
         env:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
           set -Eeuo pipefail
-          mkdir -p "$RUNNER_TEMP/artifacts"
+          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --quit 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-editor-validation.log"
+          cp "$PROJECT_DIR/export_presets.cfg" "$RUNNER_TEMP/artifacts/export-presets-diagnostic.txt"
+          grep -nE '^(name|platform|runnable|advanced_options|gradle_build|package/|version/|architectures/|permissions/)' "$PROJECT_DIR/export_presets.cfg" > "$RUNNER_TEMP/artifacts/export-options-summary.txt" || true
+          printf 'ANDROID_HOME=%s\nJAVA_HOME=%s\n' "$ANDROID_HOME" "$JAVA_HOME" > "$RUNNER_TEMP/artifacts/android-paths.txt"
+
+      - name: Exportar APK Android
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        run: |
+          set -Eeuo pipefail
           "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug 'Android' "$RUNNER_TEMP/artifacts/$APK_NAME" 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-export.log"
           test -s "$RUNNER_TEMP/artifacts/$APK_NAME"
           sha256sum "$RUNNER_TEMP/artifacts/$APK_NAME" | tee "$RUNNER_TEMP/artifacts/SHA256SUMS.txt"
