@@ -1,4 +1,4 @@
-name: A Última Expedição — Godot 4.5 Android Build
+name: A Última Expedição — Godot 4.5 Android Build (Diagnóstico)
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ env:
 
 jobs:
   build:
-    name: Encontrar projeto Godot, testar e exportar APK
+    name: Diagnosticar e exportar APK Android
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -54,18 +54,22 @@ jobs:
           mkdir -p "$RUNNER_TEMP/godot/templates"
           unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates"
           TEMPLATE_SOURCE="$(find "$RUNNER_TEMP/godot/templates" -type f -name android_debug.apk -printf '%h\n' -quit)"
-          test -n "$TEMPLATE_SOURCE"
+          test -n "$TEMPLATE_SOURCE" || { echo "::error::O pacote oficial de templates não contém android_debug.apk."; exit 1; }
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_VERSION}"
           mkdir -p "$TEMPLATE_DIR"
           cp -a "$TEMPLATE_SOURCE"/. "$TEMPLATE_DIR"/
           "$GODOT_BIN" --version
+          find "$TEMPLATE_DIR" -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/artifacts/installed-godot-templates.txt"
+
+      - name: Instalar e verificar Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Instalar componentes Android e configurar Godot
         shell: bash
         run: |
           set -Eeuo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          test -d "$SDK_ROOT" || { echo "::error::Android SDK não encontrado: $SDK_ROOT"; exit 1; }
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDK_ROOT" && test -d "$SDK_ROOT" || { echo "::error::Android SDK não encontrado. Variáveis ANDROID_HOME/ANDROID_SDK_ROOT inválidas."; exit 1; }
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
           test -n "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado em $SDK_ROOT"; exit 1; }
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
@@ -79,7 +83,12 @@ jobs:
           export/android/android_sdk_path = "$SDK_ROOT"
           export/android/java_sdk_path = "$JAVA_HOME"
           EOF_SETTINGS
-          "$SDK_ROOT/platform-tools/adb" version || true
+          {
+            printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\nJAVA_HOME=%s\n' "$SDK_ROOT" "${ANDROID_SDK_ROOT:-$SDK_ROOT}" "$JAVA_HOME"
+            java -version
+            "$SDKMANAGER" --version
+          } > "$RUNNER_TEMP/artifacts/android-environment.txt" 2>&1
+          "$SDK_ROOT/platform-tools/adb" version >> "$RUNNER_TEMP/artifacts/android-environment.txt" 2>&1 || true
 
       - name: Encontrar ZIP do projeto Godot
         id: project
@@ -89,9 +98,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/extracted"
           all_candidates=()
           preferred_candidates=()
-
           while IFS= read -r -d '' z; do
-            # Evita grep -q: com pipefail pode dar SIGPIPE ao unzip e falhar falsamente.
+            # Não usar grep -q com pipefail: pode interromper unzip e causar falso negativo.
             if unzip -Z1 "$z" 2>/dev/null | grep -E '(^|/)project[.]godot$' >/dev/null; then
               all_candidates+=("$z")
               name="$(basename "$z")"
@@ -100,53 +108,35 @@ jobs:
               fi
             fi
           done < <(find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print0)
-
           if [[ "${#preferred_candidates[@]}" -eq 1 ]]; then
             SELECTED_ZIP="${preferred_candidates[0]}"
           elif [[ "${#preferred_candidates[@]}" -gt 1 ]]; then
-            echo "::error::Existem vários ZIPs não identificados como correção com project.godot; não vou escolher ao acaso."
+            echo "::error::Vários ZIPs candidatos. Não vou escolher um projeto ao acaso."
             printf 'Candidato: %s\n' "${preferred_candidates[@]}"
             exit 1
           elif [[ "${#all_candidates[@]}" -eq 1 ]]; then
             SELECTED_ZIP="${all_candidates[0]}"
-            echo "Único ZIP com project.godot aceite apesar do nome de correção: $SELECTED_ZIP"
           else
             echo "::error::Não foi encontrado um único ZIP válido com project.godot."
-            echo "ZIPs encontrados no workspace:"
             find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print || true
-            echo "Conteúdo de cada ZIP (amostra):"
-            while IFS= read -r -d '' z; do
-              echo "--- $z"
-              unzip -Z1 "$z" 2>/dev/null | head -n 30 || true
-            done < <(find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print0)
             exit 1
           fi
-
           echo "ZIP selecionado: $SELECTED_ZIP"
           unzip -oq "$SELECTED_ZIP" -d "$RUNNER_TEMP/extracted"
           PROJECT_FILE="$(find "$RUNNER_TEMP/extracted" -type f -name project.godot -print -quit)"
-          if [[ -z "$PROJECT_FILE" ]]; then
-            echo "::error::O ZIP selecionado não contém project.godot após extração."
-            exit 1
-          fi
+          test -n "$PROJECT_FILE" || { echo "::error::ZIP extraído sem project.godot."; exit 1; }
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
-          if [[ ! -s "$PROJECT_DIR/export_presets.cfg" ]]; then
-            echo "::error::Projeto encontrado, mas falta export_presets.cfg em $PROJECT_DIR"
-            exit 1
-          fi
-          if ! grep -q '^platform="Android"' "$PROJECT_DIR/export_presets.cfg"; then
-            echo "::error::export_presets.cfg não contém um preset Android."
-            exit 1
-          fi
+          test -s "$PROJECT_DIR/export_presets.cfg" || { echo "::error::Falta export_presets.cfg."; exit 1; }
+          grep -q '^platform="Android"' "$PROJECT_DIR/export_presets.cfg" || { echo "::error::Não existe preset Android."; exit 1; }
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Projeto encontrado em: $PROJECT_DIR"
+          echo "Projeto: $PROJECT_DIR"
 
       - name: Importar recursos do projeto
         shell: bash
         env:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
-          set -Eeuo pipefail
+          set -o pipefail
           "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-import.log"
 
       - name: Teste de arranque headless
@@ -165,16 +155,31 @@ jobs:
           fi
           test "$status" -eq 0
 
-      - name: Diagnosticar configuração do preset Android
+      - name: Diagnóstico detalhado do preset Android
+        if: always()
         shell: bash
         env:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
-          set -Eeuo pipefail
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --quit 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-editor-validation.log"
-          cp "$PROJECT_DIR/export_presets.cfg" "$RUNNER_TEMP/artifacts/export-presets-diagnostic.txt"
-          grep -nE '^(name|platform|runnable|advanced_options|gradle_build|package/|version/|architectures/|permissions/)' "$PROJECT_DIR/export_presets.cfg" > "$RUNNER_TEMP/artifacts/export-options-summary.txt" || true
-          printf 'ANDROID_HOME=%s\nJAVA_HOME=%s\n' "$ANDROID_HOME" "$JAVA_HOME" > "$RUNNER_TEMP/artifacts/android-paths.txt"
+          set +e
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          cp "$PROJECT_DIR/export_presets.cfg" "$RUNNER_TEMP/artifacts/export-presets-diagnostic.txt" 2>/dev/null
+          grep -nE '^(name|platform|runnable|advanced_options|gradle_build|package/|version/|architectures/|permissions/|keystore/|shader_baker/)' "$PROJECT_DIR/export_presets.cfg" > "$RUNNER_TEMP/artifacts/export-options-summary.txt" 2>/dev/null
+          {
+            echo '=== GODOT VERSION ==='
+            "$GODOT_BIN" --version
+            echo '=== ANDROID / JAVA VARIABLES ==='
+            env | grep -E '^(ANDROID_HOME|ANDROID_SDK_ROOT|JAVA_HOME)='
+            echo '=== REQUIRED FILES ==='
+            for p in "$ANDROID_HOME/platform-tools/adb" "$ANDROID_HOME/build-tools/35.0.0/aapt" "$ANDROID_HOME/build-tools/35.0.0/apksigner" "$ANDROID_HOME/platforms/android-35/android.jar" "$HOME/.local/share/godot/export_templates/$GODOT_TEMPLATE_VERSION/android_debug.apk" "$HOME/.local/share/godot/export_templates/$GODOT_TEMPLATE_VERSION/android_release.apk"; do
+              if [[ -e "$p" ]]; then echo "OK $p"; else echo "MISSING $p"; fi
+            done
+            echo '=== PRESET VALIDATION / EXPORT DIAGNOSTIC ==='
+            "$GODOT_BIN" --verbose --headless --path "$PROJECT_DIR" --export-debug 'Android' "$RUNNER_TEMP/artifacts/diagnostic-test.apk"
+            echo "export_exit_code=$?"
+          } > "$RUNNER_TEMP/artifacts/android-export-diagnostic.txt" 2>&1
+          rm -f "$RUNNER_TEMP/artifacts/diagnostic-test.apk"
+          exit 0
 
       - name: Exportar APK Android
         shell: bash
@@ -182,11 +187,18 @@ jobs:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
           set -Eeuo pipefail
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug 'Android' "$RUNNER_TEMP/artifacts/$APK_NAME" 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-export.log"
+          set +e
+          "$GODOT_BIN" --verbose --headless --path "$PROJECT_DIR" --export-debug 'Android' "$RUNNER_TEMP/artifacts/$APK_NAME" 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-export.log"
+          export_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$export_status" -ne 0 ]]; then
+            echo "::error::Exportação Android falhou (código $export_status). Consultar godot-export.log e android-export-diagnostic.txt."
+            exit "$export_status"
+          fi
           test -s "$RUNNER_TEMP/artifacts/$APK_NAME"
           sha256sum "$RUNNER_TEMP/artifacts/$APK_NAME" | tee "$RUNNER_TEMP/artifacts/SHA256SUMS.txt"
 
-      - name: Publicar APK e logs
+      - name: Publicar APK e diagnósticos
         if: always()
         uses: actions/upload-artifact@v4
         with:
