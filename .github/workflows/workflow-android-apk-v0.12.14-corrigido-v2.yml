@@ -1,4 +1,4 @@
-name: A Última Expedição — Godot 4.5 Android Build
+name: A Última Expedição — Godot 4.5 Android Build (corrigido)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   build:
-    name: Diagnosticar e exportar APK Android
+    name: Preparar SDK, validar projeto e exportar APK
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -59,18 +59,14 @@ jobs:
           "$GODOT_BIN" --version
           find "$TEMPLATE_DIR" -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/artifacts/installed-godot-templates.txt"
 
-      # FIX v7: definir explicitamente os pacotes válidos.
-      # Sem "packages", setup-android@v3 tenta instalar o pacote obsoleto "tools".
-      - name: Preparar Android SDK (pacotes explícitos)
+      # A ação recebe apenas um pacote aqui. Não usar lista multilinha:
+      # versões da ação podem tratar o bloco todo como o nome de um único pacote.
+      - name: Preparar Android SDK — apenas platform-tools
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
-            cmdline-tools;latest
+          packages: platform-tools
 
-      - name: Verificar Android SDK e configurar Godot
+      - name: Instalar restantes componentes Android individualmente
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -78,6 +74,10 @@ jobs:
           test -n "$SDK_ROOT" && test -d "$SDK_ROOT" || { echo "::error::Android SDK não encontrado."; exit 1; }
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
           test -n "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado em $SDK_ROOT"; exit 1; }
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-35" "build-tools;35.0.0" "cmdline-tools;latest"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           mkdir -p "$HOME/.config/godot"
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF_SETTINGS
           [gd_resource type="EditorSettings" format=3]
@@ -117,7 +117,7 @@ jobs:
             base="$(basename "$z" | tr '[:upper:]' '[:lower:]')"
             if [[ "$base" == *"a-ultima-expedicao"* && "$base" != *"log"* && "$base" != *"diagnost"* && "$base" != *"preflight"* ]]; then
               if [[ -n "$selected" ]]; then
-                echo "::error::Vários ZIPs do jogo encontrados; deixar apenas um ZIP de projeto na raiz."
+                echo "::error::Vários ZIPs do jogo encontrados; deixa apenas um ZIP do projeto no repositório."
                 printf 'Candidato: %s\n' "${candidates[@]}"
                 exit 1
               fi
