@@ -8,6 +8,7 @@ on:
       - '**/*.zip'
       - '.github/workflows/build.yml'
       - '.github/workflows/workflow-android-apk-v0.12.14.yml'
+      - '.github/workflows/workflow-android-apk-v0.12.14-corrigido-v2.yml'
 
 permissions:
   contents: read
@@ -88,9 +89,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/extracted"
           all_candidates=()
           preferred_candidates=()
+
           while IFS= read -r -d '' z; do
-            # O critério principal é o conteúdo, não o nome do ZIP.
-            if unzip -Z1 "$z" 2>/dev/null | grep -Eq '(^|/)project[.]godot$'; then
+            # Evita grep -q: com pipefail pode dar SIGPIPE ao unzip e falhar falsamente.
+            if unzip -Z1 "$z" 2>/dev/null | grep -E '(^|/)project[.]godot$' >/dev/null; then
               all_candidates+=("$z")
               name="$(basename "$z")"
               if [[ ! "$name" =~ [Cc][Oo][Rr][Rr][Ii][Gg][Ii][Dd][Oo] && ! "$name" =~ [Cc][Oo][Rr][Rr][Ee][Cc][Aa][Oo] && ! "$name" =~ [Pp][Aa][Tt][Cc][Hh] ]]; then
@@ -103,16 +105,15 @@ jobs:
             SELECTED_ZIP="${preferred_candidates[0]}"
           elif [[ "${#preferred_candidates[@]}" -gt 1 ]]; then
             echo "::error::Existem vários ZIPs não identificados como correção com project.godot; não vou escolher ao acaso."
-            printf 'Candidato: %s\\n' "${preferred_candidates[@]}"
+            printf 'Candidato: %s\n' "${preferred_candidates[@]}"
             exit 1
           elif [[ "${#all_candidates[@]}" -eq 1 ]]; then
-            # Aceitar um único ZIP válido mesmo que o nome inclua CORRIGIDO/PATCH.
             SELECTED_ZIP="${all_candidates[0]}"
             echo "Único ZIP com project.godot aceite apesar do nome de correção: $SELECTED_ZIP"
           else
             echo "::error::Não foi encontrado um único ZIP válido com project.godot."
             echo "ZIPs encontrados no workspace:"
-            find "$GITHUB_WORKSPACE" -type f -name '*.zip' -printf '%p\\n' || true
+            find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print || true
             echo "Conteúdo de cada ZIP (amostra):"
             while IFS= read -r -d '' z; do
               echo "--- $z"
