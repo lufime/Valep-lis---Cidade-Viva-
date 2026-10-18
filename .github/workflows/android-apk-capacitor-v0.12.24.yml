@@ -1,232 +1,127 @@
-name: A Última Expedição v0.12.24 — Capacitor Android Build
+name: A Última Expedição — Godot Android APK
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
     paths:
-      - '**/*.zip'
-      - '.github/workflows/**'
+      - 'A-Ultima-Expedicao-Godot-*.zip'
+      - '.github/workflows/ultima-expedicao-godot-android.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ultima-expedicao-capacitor-android-${{ github.ref }}
+  group: ultima-expedicao-godot-android-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GODOT_VERSION: '4.5-stable'
+  APK_NAME: 'A-Ultima-Expedicao-Godot-v0.1.8-debug.apk'
+
 jobs:
-  build-android:
-    name: Validar, testar e compilar APK Capacitor
+  build:
+    name: Validar projeto Godot e exportar APK
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-
     steps:
-      - name: Obter repositório
+      - name: Obter código
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Localizar ZIP v0.12.24 (com ou sem sufixo)
-        id: project
+      - name: Encontrar e extrair ZIP do projeto Godot
         shell: bash
         run: |
           set -Eeuo pipefail
-          EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
-          mkdir -p "$EXTRACT_ROOT"
-
-          mapfile -t candidates < <(
-            find "$GITHUB_WORKSPACE" -type f -iname 'A-Ultima-Expedicao-v0.12.24-REMODELACAO-CINEMATOGRAFICA*.zip' \
-              -not -path '*/.git/*' -print | sort
-          )
-
-          if [[ "${#candidates[@]}" -eq 0 ]]; then
-            echo "::error::Não encontrei um ZIP A-Ultima-Expedicao-v0.12.24-REMODELACAO-CINEMATOGRAFICA*.zip."
-            echo "ZIPs encontrados:"
-            find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
+          mapfile -t ZIPS < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name 'A-Ultima-Expedicao-Godot-*.zip' -print)
+          if [ "${#ZIPS[@]}" -ne 1 ]; then
+            echo "::error::É necessário exatamente um ZIP A-Ultima-Expedicao-Godot-*.zip na raiz. Encontrados: ${#ZIPS[@]}"
+            printf '%s\n' "${ZIPS[@]:-nenhum}"
             exit 1
           fi
-
-          # Se o repositório tiver vários ZIPs v0.12.24, escolhe o pacote COM-WORKFLOW
-          # primeiro; caso exista só um, usa-o. Nunca escolhe uma versão diferente.
-          selected=""
-          for z in "${candidates[@]}"; do
-            base="$(basename "$z")"
-            if [[ "$base" == *"COM-WORKFLOW.zip" ]]; then
-              if [[ -n "$selected" ]]; then
-                echo "::error::Existem vários ZIPs v0.12.24 com COM-WORKFLOW. Deixa apenas um."
-                printf '%s\n' "${candidates[@]}"
-                exit 1
-              fi
-              selected="$z"
-            fi
-          done
-          if [[ -z "$selected" ]]; then
-            if [[ "${#candidates[@]}" -eq 1 ]]; then
-              selected="${candidates[0]}"
-            else
-              echo "::error::Existem vários ZIPs v0.12.24 e nenhum tem prioridade clara. Deixa apenas um ZIP da versão."
-              printf '%s\n' "${candidates[@]}"
-              exit 1
-            fi
-          fi
-
-          unzip -tq "$selected"
-          unzip -oq "$selected" -d "$EXTRACT_ROOT"
-          mapfile -t package_files < <(find "$EXTRACT_ROOT" -type f -name package.json -not -path '*/node_modules/*' -print)
-          PROJECT_DIR=""
-          for package_file in "${package_files[@]}"; do
-            candidate="$(dirname "$package_file")"
-            if [[ -s "$candidate/capacitor.config.json" && -s "$candidate/www/index.html" ]]; then
-              if [[ -n "$PROJECT_DIR" ]]; then
-                echo "::error::Mais de uma raiz Capacitor encontrada no ZIP."
-                printf '%s\n' "$PROJECT_DIR" "$candidate"
-                exit 1
-              fi
-              PROJECT_DIR="$candidate"
-            fi
-          done
-
-          if [[ -z "$PROJECT_DIR" ]]; then
-            echo "::error::ZIP encontrado, mas sem a estrutura Capacitor esperada."
-            find "$EXTRACT_ROOT" -maxdepth 5 -type f -print || true
+          mkdir -p "$RUNNER_TEMP/godot-project"
+          unzip -q "${ZIPS[0]}" -d "$RUNNER_TEMP/godot-project"
+          mapfile -t PROJECTS < <(find "$RUNNER_TEMP/godot-project" -type f -name project.godot -not -path '*/.godot/*' -printf '%h\n')
+          if [ "${#PROJECTS[@]}" -ne 1 ]; then
+            echo "::error::Esperava um único project.godot dentro do ZIP; encontrados: ${#PROJECTS[@]}"
+            find "$RUNNER_TEMP/godot-project" -name project.godot -print
             exit 1
           fi
-
-          node -e "const p=require(process.argv[1]); if(p.version !== '0.12.24') { console.error('Versão inesperada:',p.version); process.exit(1); } console.log('Versão do projeto:',p.version)" "$PROJECT_DIR/package.json"
+          PROJECT_DIR="${PROJECTS[0]}"
+          test -s "$PROJECT_DIR/export_presets.cfg"
+          grep -q 'platform="Android"' "$PROJECT_DIR/export_presets.cfg" || { echo "::error::Falta preset Android em export_presets.cfg"; exit 1; }
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          {
-            echo "ZIP selecionado: $selected"
-            echo "PROJECT_DIR=$PROJECT_DIR"
-            sha256sum "$selected"
-          } | tee "$RUNNER_TEMP/project-selection.txt"
+          echo "Projeto Godot encontrado: $PROJECT_DIR"
 
-      - name: Configurar Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Configurar Java 21
+      - name: Instalar Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '17'
 
-      - name: Preparar Android SDK
+      - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
 
-      - name: Instalar plataforma e ferramentas Android
+      - name: Instalar ferramentas e Godot 4.5
         shell: bash
         run: |
           set -Eeuo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$SDK_ROOT" && test -d "$SDK_ROOT" || { echo "::error::Android SDK não encontrado."; exit 1; }
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
-          test -n "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado."; exit 1; }
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-35" "build-tools;35.0.0"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --list_installed > "$RUNNER_TEMP/android-sdk-packages.txt"
+          sudo apt-get update
+          sudo apt-get install -y unzip zip xvfb
+          mkdir -p "$RUNNER_TEMP/godot"
+          curl --fail --location --retry 3 "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" -o "$RUNNER_TEMP/godot/godot.zip"
+          unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v*_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --retry 3 "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" -o "$RUNNER_TEMP/godot/templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot/templates"
+          unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}"
+          mkdir -p "$TEMPLATE_DIR"
+          TEMPLATE_SOURCE="$(find "$RUNNER_TEMP/godot/templates" -type f -name android_debug.apk -printf '%h\n' -quit)"
+          test -n "$TEMPLATE_SOURCE" || { echo "::error::Template Android oficial não encontrado"; exit 1; }
+          cp -a "$TEMPLATE_SOURCE"/. "$TEMPLATE_DIR"/
+          "$GODOT_BIN" --version
 
-      - name: Validar configuração e instalar dependências
+      - name: Configurar caminhos Android no Godot
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          node --version
-          npm --version
-          node -e "const p=require('./package.json'); for(const x of ['@capacitor/core','@capacitor/android']) if(!p.dependencies?.[x]) throw new Error('Falta dependência '+x); if(!p.devDependencies?.['@capacitor/cli']) throw new Error('Falta @capacitor/cli'); console.log('package.json válido:',p.name,p.version)"
-          node -e "const c=require('./capacitor.config.json'); if(!c.appId || !c.appName || c.webDir!=='www') throw new Error('capacitor.config.json inválido'); console.log('Capacitor:',c.appId,c.appName)"
-          npm install --no-audit --no-fund
-          npm run build
-          test -s www/js/nearby-bridge.bundle.js
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF_SETTINGS
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_HOME}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          EOF_SETTINGS
 
-      - name: Executar testes do projeto
+      - name: Importar recursos
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          npm test
+          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import
 
-      - name: Preparar projeto Android Capacitor
+      - name: Teste de arranque
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          # O ZIP pode conter uma pasta android parcial (por exemplo, só os ícones).
-          # A existência da pasta, por si só, não significa que exista um projeto Gradle válido.
-          if [[ ! -s android/gradlew || ( ! -s android/app/build.gradle && ! -s android/app/build.gradle.kts ) ]]; then
-            echo "Projeto Android incompleto; a gerar novamente com Capacitor."
-            rm -rf android
-            npx cap add android
-          else
-            echo "Projeto Android/Gradle existente e estruturalmente válido."
-          fi
-          npx cap sync android
-          if [[ ! -s android/gradlew ]]; then
-            echo "::error::Capacitor não gerou android/gradlew."
-            find android -maxdepth 3 -type f -print | sort | head -200
-            exit 1
-          fi
-          if [[ ! -s android/app/build.gradle && ! -s android/app/build.gradle.kts ]]; then
-            echo "::error::Capacitor não gerou o ficheiro Gradle da aplicação."
-            find android -maxdepth 4 -type f -print | sort | head -200
-            exit 1
-          fi
-          echo "Projeto Android validado: wrapper Gradle e configuração da app encontrados."
+          timeout 120 "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 5
 
-      - name: Aplicar ícone Android
+      - name: Exportar APK Android de depuração
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          python3 -m pip install --quiet Pillow
-          python3 scripts/apply-android-icon.py
-          test -s android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug 'Android' "$RUNNER_TEMP/artifacts/$APK_NAME"
+          test -s "$RUNNER_TEMP/artifacts/$APK_NAME"
+          sha256sum "$RUNNER_TEMP/artifacts/$APK_NAME" > "$RUNNER_TEMP/artifacts/SHA256SUMS.txt"
 
-      - name: Validar plugin nativo Nearby
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          python3 scripts/register-nearby-android.py
-          PLUGIN_JAVA="$(find node_modules/capacitor-nearby-link/android/src/main/java -type f -name '*Plugin.java' -print -quit)"
-          test -n "$PLUGIN_JAVA" && test -s "$PLUGIN_JAVA"
-          grep -q 'CapacitorPlugin' "$PLUGIN_JAVA"
-
-      - name: Compilar APK Android
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR/android"
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleDebug
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          mkdir -p "$RUNNER_TEMP/ultima-expedicao-artifacts"
-          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-v0.12.24-debug.apk"
-          sha256sum "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-v0.12.24-debug.apk" | tee "$RUNNER_TEMP/ultima-expedicao-artifacts/SHA256SUMS.txt"
-
-      - name: Publicar APK
-        if: success()
+      - name: Publicar APK e logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-v0.12.24-Android-APK
-          path: ${{ runner.temp }}/ultima-expedicao-artifacts/**
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Guardar diagnósticos se falhar
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: A-Ultima-Expedicao-v0.12.24-diagnostico
-          path: |
-            ${{ runner.temp }}/project-selection.txt
-            ${{ runner.temp }}/android-sdk-packages.txt
-            ${{ runner.temp }}/ultima-expedicao/**
-          if-no-files-found: ignore
+          name: A-Ultima-Expedicao-Godot-Android
+          path: ${{ runner.temp }}/artifacts/**
+          if-no-files-found: warn
           retention-days: 14
