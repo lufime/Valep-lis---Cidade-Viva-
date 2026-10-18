@@ -6,7 +6,7 @@ on:
     branches: [main, master]
     paths:
       - 'A-Ultima-Expedicao-Godot-*.zip'
-      - '.github/workflows/ultima-expedicao-godot-android.yml'
+      - '.github/workflows/ultima-expedicao-godot-android-1.yml'
 
 permissions:
   contents: read
@@ -62,14 +62,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -type f -name sdkmanager -print -quit)"
-          fi
-          test -n "$SDKMANAGER" && test -x "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado em ${ANDROID_HOME}"; exit 1; }
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          test -n "$SDKMANAGER" && test -x "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado em $SDK_ROOT/cmdline-tools"; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
 
       - name: Instalar ferramentas e Godot 4.5
         shell: bash
