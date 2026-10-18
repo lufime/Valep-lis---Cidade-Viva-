@@ -7,6 +7,7 @@ on:
     paths:
       - '**/*.zip'
       - '.github/workflows/build.yml'
+      - '.github/workflows/workflow-android-apk-v0.12.14.yml'
 
 permissions:
   contents: read
@@ -29,12 +30,15 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v4
 
-      - name: Preparar Java 17 e Android SDK
-        uses: actions/setup-java@v4
+      - name: Preparar Java 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+
+      # Não usar android-actions/setup-android@v3 aqui:
+      # o log fornecido mostra que a action falha ao pedir o pacote obsoleto "tools".
+      # O runner ubuntu-24.04 já inclui Android SDK e sdkmanager.
 
       - name: Instalar Godot 4.5 e templates Android
         shell: bash
@@ -63,14 +67,23 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'cmdline-tools;latest'
+          : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "ERRO: sdkmanager não encontrado em $ANDROID_HOME/cmdline-tools"
+            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'cmdline-tools;latest'
           mkdir -p "$HOME/.config/godot"
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF_SETTINGS
           [gd_resource type="EditorSettings" format=3]
           [resource]
-          export/android/android_sdk_path = "${ANDROID_HOME}"
-          export/android/java_sdk_path = "${JAVA_HOME}"
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
           EOF_SETTINGS
 
       - name: Encontrar ZIP com projeto Godot
@@ -78,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p "$RUNNER_TEMP/source-zips" "$RUNNER_TEMP/extracted"
+          mkdir -p "$RUNNER_TEMP/extracted"
           found=''
           while IFS= read -r -d '' z; do
             if unzip -Z1 "$z" | grep -Eq '(^|/)project\.godot$'; then
@@ -87,7 +100,7 @@ jobs:
             fi
           done < <(find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print0)
           if [[ -z "$found" ]]; then
-            echo 'ERRO: nenhum ZIP contém project.godot. Este workflow é para Godot, não para Capacitor/package.json.'
+            echo 'ERRO: nenhum ZIP contém project.godot.'
             echo 'ZIPs disponíveis:'
             find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print || true
             exit 1
