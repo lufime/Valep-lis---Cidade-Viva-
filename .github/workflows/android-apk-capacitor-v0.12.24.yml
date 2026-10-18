@@ -156,10 +156,27 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
-          if [[ ! -d android ]]; then npx cap add android; fi
+          # O ZIP pode conter uma pasta android parcial (por exemplo, só os ícones).
+          # A existência da pasta, por si só, não significa que exista um projeto Gradle válido.
+          if [[ ! -s android/gradlew || ( ! -s android/app/build.gradle && ! -s android/app/build.gradle.kts ) ]]; then
+            echo "Projeto Android incompleto; a gerar novamente com Capacitor."
+            rm -rf android
+            npx cap add android
+          else
+            echo "Projeto Android/Gradle existente e estruturalmente válido."
+          fi
           npx cap sync android
-          test -s android/gradlew
-          test -s android/app/build.gradle || test -s android/app/build.gradle.kts
+          if [[ ! -s android/gradlew ]]; then
+            echo "::error::Capacitor não gerou android/gradlew."
+            find android -maxdepth 3 -type f -print | sort | head -200
+            exit 1
+          fi
+          if [[ ! -s android/app/build.gradle && ! -s android/app/build.gradle.kts ]]; then
+            echo "::error::Capacitor não gerou o ficheiro Gradle da aplicação."
+            find android -maxdepth 4 -type f -print | sort | head -200
+            exit 1
+          fi
+          echo "Projeto Android validado: wrapper Gradle e configuração da app encontrados."
 
       - name: Aplicar ícone Android
         shell: bash
