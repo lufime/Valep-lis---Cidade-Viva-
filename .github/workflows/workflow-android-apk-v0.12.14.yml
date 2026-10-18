@@ -134,22 +134,29 @@ jobs:
           cd "$PROJECT_DIR"
           npm test
 
-      - name: Preparar projeto Android existente
+      - name: Preparar projeto Android
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
 
-          # Não recriar nem apagar a pasta Android se já existir no ZIP.
-          if [[ ! -s android/gradlew || ! -s android/settings.gradle && ! -s android/settings.gradle.kts ]]; then
+          # Reutilizar a plataforma apenas se for um projeto Gradle completo.
+          if [[ -s android/gradlew &&
+                ( -s android/settings.gradle || -s android/settings.gradle.kts ) &&
+                ( -s android/app/build.gradle || -s android/app/build.gradle.kts ) ]]; then
+            echo "Projeto Android Gradle completo detetado; será preservado."
+          else
             if [[ -d android ]]; then
-              echo "::error::A pasta android existe, mas não parece ser um projeto Gradle completo."
-              find android -maxdepth 3 -type f -print || true
-              exit 1
+              echo "::warning::A pasta android existe, mas está incompleta. Será recriada pelo Capacitor."
+              rm -rf android
             fi
             npx cap add android
-          else
-            echo "Projeto Android existente detetado; será preservado."
+          fi
+
+          test -s android/gradlew
+          if [[ ! -s android/settings.gradle && ! -s android/settings.gradle.kts ]]; then
+            echo "::error::Falta settings.gradle no projeto Android."
+            exit 1
           fi
 
       - name: Sincronizar recursos
