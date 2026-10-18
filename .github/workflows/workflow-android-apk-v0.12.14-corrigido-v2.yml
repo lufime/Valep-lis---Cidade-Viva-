@@ -90,7 +90,7 @@ jobs:
           preferred_candidates=()
           while IFS= read -r -d '' z; do
             # O critério principal é o conteúdo, não o nome do ZIP.
-            if unzip -Z1 "$z" 2>/dev/null | grep -Eq '(^|/)project\.godot$'; then
+            if unzip -Z1 "$z" 2>/dev/null | grep -Eq '(^|/)project[.]godot$'; then
               all_candidates+=("$z")
               name="$(basename "$z")"
               if [[ ! "$name" =~ [Cc][Oo][Rr][Rr][Ii][Gg][Ii][Dd][Oo] && ! "$name" =~ [Cc][Oo][Rr][Rr][Ee][Cc][Aa][Oo] && ! "$name" =~ [Pp][Aa][Tt][Cc][Hh] ]]; then
