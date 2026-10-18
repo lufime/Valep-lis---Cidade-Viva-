@@ -58,11 +58,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # O pacote legado "tools" já não existe nos repositórios atuais do Android SDK.
-          packages: 'platform-tools;platforms;android-35;build-tools;35.0.0'
+      - name: Configurar Android SDK sem pacote legado tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          fi
+          test -n "$SDKMANAGER" && test -x "$SDKMANAGER" || { echo "::error::sdkmanager não encontrado em ${ANDROID_HOME}"; exit 1; }
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
 
       - name: Instalar ferramentas e Godot 4.5
         shell: bash
