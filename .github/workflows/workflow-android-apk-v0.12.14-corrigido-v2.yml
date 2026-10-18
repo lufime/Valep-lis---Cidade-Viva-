@@ -59,8 +59,6 @@ jobs:
           "$GODOT_BIN" --version
           find "$TEMPLATE_DIR" -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/artifacts/installed-godot-templates.txt"
 
-      # A ação recebe apenas um pacote aqui. Não usar lista multilinha:
-      # versões da ação podem tratar o bloco todo como o nome de um único pacote.
       - name: Preparar Android SDK — apenas platform-tools
         uses: android-actions/setup-android@v3
         with:
@@ -144,6 +142,71 @@ jobs:
           grep -E '^[[:space:]]*platform="Android"[[:space:]]*$' "$PROJECT_DIR/export_presets.cfg" >/dev/null || { echo "::error::Não existe preset Android."; exit 1; }
           echo "PROJECT_DIR=$PROJECT_DIR" | tee "$RUNNER_TEMP/artifacts/project-path-diagnostic.txt"
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Corrigir e validar preset Android
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        run: |
+          set -Eeuo pipefail
+          PRESET="$PROJECT_DIR/export_presets.cfg"
+          test -f "$PRESET"
+
+          python3 - "$PRESET" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
+          sections = re.split(r'(?=^\[preset\.\d+\]\s*$)', text, flags=re.M)
+          changed = False
+
+          for i, section in enumerate(sections):
+              if not re.search(r'^platform="Android"\s*$', section, re.M):
+                  continue
+              gradle = re.search(
+                  r'^gradle_build/use_gradle_build=(true|false)\s*$',
+                  section, re.M
+              )
+              if gradle and gradle.group(1) == "false":
+                  updated = re.sub(
+                      r'^\s*gradle_build/(?:min_sdk|target_sdk)=.*\n',
+                      '', section, flags=re.M
+                  )
+                  if updated != section:
+                      sections[i] = updated
+                      changed = True
+
+          if changed:
+              path.write_text("".join(sections), encoding="utf-8")
+
+          text = path.read_text(encoding="utf-8")
+          android = [
+              s for s in re.split(
+                  r'(?=^\[preset\.\d+\]\s*$)', text, flags=re.M
+              )
+              if re.search(r'^platform="Android"\s*$', s, re.M)
+          ]
+          if len(android) != 1:
+              raise SystemExit(
+                  f"Esperava um preset Android; encontrei {len(android)}."
+              )
+
+          section = android[0]
+          gradle = re.search(
+              r'^gradle_build/use_gradle_build=(true|false)\s*$',
+              section, re.M
+          )
+          if gradle and gradle.group(1) == "false":
+              for key in ("min_sdk", "target_sdk"):
+                  if re.search(rf'^\s*gradle_build/{key}=', section, re.M):
+                      raise SystemExit(
+                          f"Configuração incompatível ainda presente: {key}"
+                      )
+          print("Preset Android verificado.")
+          PY
+          cp "$PRESET" "$RUNNER_TEMP/artifacts/export_presets-after-validation.cfg"
 
       - name: Importar recursos do projeto
         shell: bash
