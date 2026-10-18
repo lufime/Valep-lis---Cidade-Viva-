@@ -1,4 +1,4 @@
-name: A Última Expedição v0.12.18 — Testes e APK Android
+name: A Última Expedição — Testes e APK Android (qualquer ZIP)
 
 on:
   workflow_dispatch:
@@ -25,55 +25,61 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Localizar e validar ZIP do jogo
+      - name: Localizar e validar qualquer ZIP do jogo
         shell: bash
         run: |
           set -Eeuo pipefail
           EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
-          mkdir -p "$EXTRACT_ROOT"
+          PROBE_ROOT="$RUNNER_TEMP/zip-probe"
+          mkdir -p "$EXTRACT_ROOT" "$PROBE_ROOT"
           ZIP_PATH=""
+          PROJECT_REL=""
 
-          # Preferir o ZIP da versão atual; se o nome mudar, procurar um ZIP Capacitor válido.
-          ZIP_PATH="$(find "$GITHUB_WORKSPACE" -type f -name 'A-Ultima-Expedicao-Android-v0.12.18-ICONE-APP-CORRIGIDO.zip' -not -path '*/.git/*' -print -quit || true)"
-          if [[ -z "$ZIP_PATH" ]]; then
-            while IFS= read -r -d '' candidate; do
-              probe="$RUNNER_TEMP/zip-probe"
-              rm -rf "$probe"
-              mkdir -p "$probe"
-              if unzip -tq "$candidate" >/dev/null 2>&1 && unzip -oq "$candidate" -d "$probe"; then
-                package_file="$(find "$probe" -type f -name package.json -print -quit)"
-                if [[ -n "$package_file" ]]; then
-                  candidate_dir="$(dirname "$package_file")"
-                  if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
-                    ZIP_PATH="$candidate"
-                    break
-                  fi
-                fi
+          # Examina todos os ZIPs do repositório, sem depender do nome ou versão.
+          # Percorre TODOS os package.json: o plugin local também tem um package.json.
+          while IFS= read -r -d '' candidate; do
+            [[ "$candidate" == *"/.git/"* ]] && continue
+            if ! unzip -tq "$candidate" >/dev/null 2>&1; then
+              echo "Ignorado (ZIP inválido): $candidate"
+              continue
+            fi
+            rm -rf "$PROBE_ROOT"
+            mkdir -p "$PROBE_ROOT"
+            if ! unzip -oq "$candidate" -d "$PROBE_ROOT"; then
+              continue
+            fi
+            while IFS= read -r -d '' package_file; do
+              candidate_dir="$(dirname "$package_file")"
+              if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
+                ZIP_PATH="$candidate"
+                PROJECT_REL="${candidate_dir#"$PROBE_ROOT"/}"
+                if [[ "$candidate_dir" == "$PROBE_ROOT" ]]; then PROJECT_REL="."; fi
+                break
               fi
-            done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0)
-          fi
+            done < <(find "$PROBE_ROOT" -type f -name package.json -print0)
+            [[ -n "$ZIP_PATH" ]] && break
+          done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0 | sort -z)
 
           if [[ -z "$ZIP_PATH" ]]; then
-            echo "::error::Não encontrei um ZIP válido do jogo (package.json + capacitor.config.json + www/index.html)."
+            echo "::error::Nenhum ZIP contém package.json, capacitor.config.json e www/index.html na mesma pasta."
+            echo "ZIPs encontrados:"
             find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
             exit 1
           fi
 
           echo "ZIP selecionado: $ZIP_PATH"
+          echo "Raiz interna identificada: $PROJECT_REL"
           unzip -tq "$ZIP_PATH"
+          rm -rf "$EXTRACT_ROOT"
+          mkdir -p "$EXTRACT_ROOT"
           unzip -oq "$ZIP_PATH" -d "$EXTRACT_ROOT"
-
-          PROJECT_DIR=""
-          while IFS= read -r -d '' package_file; do
-            candidate_dir="$(dirname "$package_file")"
-            if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
-              PROJECT_DIR="$candidate_dir"
-              break
-            fi
-          done < <(find "$EXTRACT_ROOT" -type f -name package.json -print0)
-
-          if [[ -z "$PROJECT_DIR" ]]; then
-            echo "::error::Não foi possível identificar a raiz do projeto Capacitor."
+          if [[ "$PROJECT_REL" == "." ]]; then
+            PROJECT_DIR="$EXTRACT_ROOT"
+          else
+            PROJECT_DIR="$EXTRACT_ROOT/$PROJECT_REL"
+          fi
+          if [[ ! -s "$PROJECT_DIR/package.json" || ! -s "$PROJECT_DIR/capacitor.config.json" || ! -s "$PROJECT_DIR/www/index.html" ]]; then
+            echo "::error::A raiz identificada não contém os três ficheiros obrigatórios."
             exit 1
           fi
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -174,15 +180,15 @@ jobs:
           APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p "$RUNNER_TEMP/ultima-expedicao-artifacts"
-          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk"
-          ls -lh "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk"
+          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk"
+          ls -lh "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk"
 
       - name: Publicar APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-Android-v0.12.18-debug
-          path: ${{ runner.temp }}/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk
+          name: A-Ultima-Expedicao-Android-debug
+          path: ${{ runner.temp }}/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -204,10 +210,10 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: |
           {
-            echo "## A Última Expedição v0.12.18"
+            echo "## A Última Expedição"
             echo ""
             echo "- Estado do workflow: **$JOB_STATUS**"
-            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk" ]]; then
+            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk" ]]; then
               echo "- APK de depuração gerada e verificada como ficheiro não vazio."
             else
               echo "- APK não confirmada. Abrir a primeira etapa com falha nos logs."
