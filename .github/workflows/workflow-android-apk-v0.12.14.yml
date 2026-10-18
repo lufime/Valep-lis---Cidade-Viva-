@@ -1,13 +1,10 @@
-name: A Última Expedição v0.12.14 — Testes de protocolo e APK Android
+name: A Última Expedição v0.12.18 — Testes e APK Android
 
 on:
   workflow_dispatch:
   push:
-    # Permite iniciar em qualquer branch; não fica limitado a main/master.
     branches:
       - '**'
-    # Sem filtro paths: qualquer commit inicia o workflow, incluindo alterações
-    # ao próprio workflow e ao ZIP do jogo.
 
 permissions:
   contents: read
@@ -18,9 +15,9 @@ concurrency:
 
 jobs:
   build-android:
-    name: Descompactar projeto e compilar APK
+    name: Validar projeto e compilar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Obter repositório
@@ -28,17 +25,16 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Localizar e descompactar ZIP do jogo
+      - name: Localizar e validar ZIP do jogo
         shell: bash
         run: |
           set -Eeuo pipefail
-          EXPECTED_ZIP="A-Ultima-Expedicao-Android-v0.12.14-ICON-APP.zip"
           EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
           mkdir -p "$EXTRACT_ROOT"
+          ZIP_PATH=""
 
-          ZIP_PATH="$(find "$GITHUB_WORKSPACE" -type f -name "$EXPECTED_ZIP" -not -path '*/.git/*' -print -quit || true)"
-
-          # Se o ZIP tiver outro nome, identificar pela estrutura Capacitor.
+          # Preferir o ZIP da versão atual; se o nome mudar, procurar um ZIP Capacitor válido.
+          ZIP_PATH="$(find "$GITHUB_WORKSPACE" -type f -name 'A-Ultima-Expedicao-Android-v0.12.18-ICONE-APP-CORRIGIDO.zip' -not -path '*/.git/*' -print -quit || true)"
           if [[ -z "$ZIP_PATH" ]]; then
             while IFS= read -r -d '' candidate; do
               probe="$RUNNER_TEMP/zip-probe"
@@ -58,12 +54,12 @@ jobs:
           fi
 
           if [[ -z "$ZIP_PATH" ]]; then
-            echo "::error::Não encontrei o ZIP do jogo. Coloca A-Ultima-Expedicao-Android-v0.12.14-ICON-APP.zip no repositório GitHub e volta a executar."
+            echo "::error::Não encontrei um ZIP válido do jogo (package.json + capacitor.config.json + www/index.html)."
             find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
             exit 1
           fi
 
-          echo "ZIP encontrado: $ZIP_PATH"
+          echo "ZIP selecionado: $ZIP_PATH"
           unzip -tq "$ZIP_PATH"
           unzip -oq "$ZIP_PATH" -d "$EXTRACT_ROOT"
 
@@ -75,25 +71,20 @@ jobs:
               break
             fi
           done < <(find "$EXTRACT_ROOT" -type f -name package.json -print0)
+
           if [[ -z "$PROJECT_DIR" ]]; then
-            echo "::error::Não encontrei a raiz Capacitor (package.json + capacitor.config.json + www/index.html)."
-            find "$EXTRACT_ROOT" -maxdepth 5 -type f -print || true
+            echo "::error::Não foi possível identificar a raiz do projeto Capacitor."
             exit 1
           fi
-          for required in capacitor.config.json www/index.html; do
-            if [[ ! -s "$PROJECT_DIR/$required" ]]; then
-              echo "::error::Falta o ficheiro obrigatório $required no projeto descompactado."
-              exit 1
-            fi
-          done
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Projeto descompactado em: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
+          echo "Projeto identificado: $PROJECT_DIR"
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Configurar Java
         uses: actions/setup-java@v4
@@ -101,104 +92,99 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Preparar Android SDK pré-instalado
+      - name: Preparar Android SDK
         shell: bash
         run: |
           set -Eeuo pipefail
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           if [[ ! -x "$SDKMANAGER" ]]; then
-            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit || true)"
           fi
-          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then echo "::error::sdkmanager não encontrado"; exit 1; fi
+          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
+            echo "::error::sdkmanager não encontrado no runner."
+            exit 1
+          fi
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          "$SDKMANAGER" --list_installed
 
-      - name: Validar projeto e instalar dependências
+      - name: Instalar dependências, construir web e testar protocolo
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
           node --version
           npm --version
-          node -e "const p=require('./package.json'); if(!p.dependencies?.['@capacitor/core'] || !p.dependencies?.['@capacitor/android'] || !p.devDependencies?.['@capacitor/cli']) { console.error('Dependências Capacitor incompletas em package.json'); process.exit(1); } console.log('Projeto:', p.name, p.version)"
-          node -e "const c=require('./capacitor.config.json'); if(!c.appId || !c.appName || c.webDir !== 'www') { console.error('capacitor.config.json inválido: requer appId, appName e webDir=www'); process.exit(1); } console.log('Capacitor:', c.appId, '-', c.appName)"
+          node -e "const p=require('./package.json'); if(!p.dependencies?.['@capacitor/core'] || !p.dependencies?.['@capacitor/android'] || !p.devDependencies?.['@capacitor/cli']) process.exit(1); console.log('Projeto:',p.name,p.version)"
+          node -e "const c=require('./capacitor.config.json'); if(!c.appId || !c.appName || c.webDir!=='www') process.exit(1); console.log('Capacitor:',c.appId,c.appName)"
           npm install --no-audit --no-fund
           npm run build
-
-      - name: Testes automatizados do protocolo
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
           npm test
 
-      - name: Preparar projeto Android
+      - name: Criar plataforma Android limpa
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
-
-          # Reutilizar a plataforma apenas se for um projeto Gradle completo.
-          if [[ -s android/gradlew &&
-                ( -s android/settings.gradle || -s android/settings.gradle.kts ) &&
-                ( -s android/app/build.gradle || -s android/app/build.gradle.kts ) ]]; then
-            echo "Projeto Android Gradle completo detetado; será preservado."
-          else
-            if [[ -d android ]]; then
-              echo "::warning::A pasta android existe, mas está incompleta. Será recriada pelo Capacitor."
+          # O ZIP atual não inclui um projeto Gradle completo. Criar a plataforma é intencional.
+          if [[ -d android ]]; then
+            if [[ -s android/gradlew && -s android/settings.gradle || -s android/gradlew && -s android/settings.gradle.kts ]]; then
+              echo "Projeto Android Gradle já completo; será reutilizado."
+            else
+              echo "Pasta android incompleta; a recriar."
               rm -rf android
+              npx cap add android
             fi
+          else
             npx cap add android
           fi
 
-          test -s android/gradlew
-          if [[ ! -s android/settings.gradle && ! -s android/settings.gradle.kts ]]; then
-            echo "::error::Falta settings.gradle no projeto Android."
-            exit 1
-          fi
+      - name: Aplicar ícone personalizado
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$PROJECT_DIR"
+          python3 -m pip install --quiet Pillow
+          python3 scripts/apply-android-icon.py
+          test -s android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          test -s android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 
-      - name: Sincronizar recursos
+      - name: Sincronizar Capacitor e validar plugin local
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR"
           npx cap sync android
-
-      - name: Validar registo e imports do módulo nativo Nearby
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
           test -s www/js/nearby-bridge.bundle.js
           python3 scripts/register-nearby-android.py
           PLUGIN_JAVA="$PROJECT_DIR/node_modules/capacitor-nearby-link/android/src/main/java/pt/ultimaexpedicao/nearby/NearbyLinkPlugin.java"
-          test -s "$PLUGIN_JAVA"
+          if [[ ! -s "$PLUGIN_JAVA" ]]; then
+            echo "::error::O plugin Nearby não foi encontrado após cap sync."
+            exit 1
+          fi
           grep -q 'import com.getcapacitor.annotation.CapacitorPlugin;' "$PLUGIN_JAVA"
           grep -q 'import com.getcapacitor.annotation.Permission;' "$PLUGIN_JAVA"
           grep -q 'import com.getcapacitor.annotation.PermissionCallback;' "$PLUGIN_JAVA"
-          echo "Imports das anotações Capacitor verificados."
 
-      - name: Compilar APK de depuração
+      - name: Compilar APK
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$PROJECT_DIR/android"
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p "$RUNNER_TEMP/ultima-expedicao-artifacts"
-          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.14-debug.apk"
-          ls -lh "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.14-debug.apk"
+          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk"
+          ls -lh "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk"
 
       - name: Publicar APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-Android-v0.12.14-debug
-          path: ${{ runner.temp }}/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.14-debug.apk
+          name: A-Ultima-Expedicao-Android-v0.12.18-debug
+          path: ${{ runner.temp }}/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -206,28 +192,27 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-diagnostico
+          name: A-Ultima-Expedicao-diagnostico-v0.12.18
           path: |
             ${{ runner.temp }}/ultima-expedicao/
             ${{ runner.temp }}/zip-probe/
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Resumo
+      - name: Resumo final
         if: always()
         shell: bash
         env:
           JOB_STATUS: ${{ job.status }}
         run: |
           {
-            echo "## A Última Expedição v0.12.14 - resultado"
+            echo "## A Última Expedição v0.12.18"
             echo ""
-            echo "- Estado: **$JOB_STATUS**"
-            echo "- O workflow procura e descompacta o ZIP antes da compilação."
-            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.14-debug.apk" ]]; then
-              echo "- APK gerada e verificada como ficheiro não vazio."
+            echo "- Estado do workflow: **$JOB_STATUS**"
+            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-v0.12.18-debug.apk" ]]; then
+              echo "- APK de depuração gerada e verificada como ficheiro não vazio."
             else
-              echo "- APK não confirmada; consultar a etapa que falhou."
+              echo "- APK não confirmada. Abrir a primeira etapa com falha nos logs."
             fi
-            echo "- A compilação não substitui o teste de instalação num telemóvel."
+            echo "- Uma compilação bem-sucedida não substitui o teste de instalação num telemóvel."
           } >> "$GITHUB_STEP_SUMMARY"
