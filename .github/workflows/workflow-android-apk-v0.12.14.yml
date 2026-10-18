@@ -1,10 +1,12 @@
-name: A Última Expedição — Testes e APK Android (qualquer ZIP)
+name: A Última Expedição 3D v0.1.8 — Build Android
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - '**'
+    branches: [main, master]
+    paths:
+      - 'ultima-expedicao-3d-prototype/**'
+      - '.github/workflows/build-android.yml'
 
 permissions:
   contents: read
@@ -13,210 +15,109 @@ concurrency:
   group: ultima-expedicao-android-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GODOT_VERSION: '4.5-stable'
+  APK_NAME: 'A-Ultima-Expedicao-v0.1.8-android.apk'
+
 jobs:
-  build-android:
-    name: Validar projeto e compilar APK
+  build:
+    name: Importar, testar arranque e exportar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
-
+    timeout-minutes: 45
     steps:
-      - name: Obter repositório
+      - name: Obter código
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Localizar e validar qualquer ZIP do jogo
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          EXTRACT_ROOT="$RUNNER_TEMP/ultima-expedicao"
-          PROBE_ROOT="$RUNNER_TEMP/zip-probe"
-          mkdir -p "$EXTRACT_ROOT" "$PROBE_ROOT"
-          ZIP_PATH=""
-          PROJECT_REL=""
-
-          # Examina todos os ZIPs do repositório, sem depender do nome ou versão.
-          # Percorre TODOS os package.json: o plugin local também tem um package.json.
-          while IFS= read -r -d '' candidate; do
-            [[ "$candidate" == *"/.git/"* ]] && continue
-            if ! unzip -tq "$candidate" >/dev/null 2>&1; then
-              echo "Ignorado (ZIP inválido): $candidate"
-              continue
-            fi
-            rm -rf "$PROBE_ROOT"
-            mkdir -p "$PROBE_ROOT"
-            if ! unzip -oq "$candidate" -d "$PROBE_ROOT"; then
-              continue
-            fi
-            while IFS= read -r -d '' package_file; do
-              candidate_dir="$(dirname "$package_file")"
-              if [[ -s "$candidate_dir/capacitor.config.json" && -s "$candidate_dir/www/index.html" ]]; then
-                ZIP_PATH="$candidate"
-                PROJECT_REL="${candidate_dir#"$PROBE_ROOT"/}"
-                if [[ "$candidate_dir" == "$PROBE_ROOT" ]]; then PROJECT_REL="."; fi
-                break
-              fi
-            done < <(find "$PROBE_ROOT" -type f -name package.json -print0)
-            [[ -n "$ZIP_PATH" ]] && break
-          done < <(find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print0 | sort -z)
-
-          if [[ -z "$ZIP_PATH" ]]; then
-            echo "::error::Nenhum ZIP contém package.json, capacitor.config.json e www/index.html na mesma pasta."
-            echo "ZIPs encontrados:"
-            find "$GITHUB_WORKSPACE" -type f -iname '*.zip' -not -path '*/.git/*' -print || true
-            exit 1
-          fi
-
-          echo "ZIP selecionado: $ZIP_PATH"
-          echo "Raiz interna identificada: $PROJECT_REL"
-          unzip -tq "$ZIP_PATH"
-          rm -rf "$EXTRACT_ROOT"
-          mkdir -p "$EXTRACT_ROOT"
-          unzip -oq "$ZIP_PATH" -d "$EXTRACT_ROOT"
-          if [[ "$PROJECT_REL" == "." ]]; then
-            PROJECT_DIR="$EXTRACT_ROOT"
-          else
-            PROJECT_DIR="$EXTRACT_ROOT/$PROJECT_REL"
-          fi
-          if [[ ! -s "$PROJECT_DIR/package.json" || ! -s "$PROJECT_DIR/capacitor.config.json" || ! -s "$PROJECT_DIR/www/index.html" ]]; then
-            echo "::error::A raiz identificada não contém os três ficheiros obrigatórios."
-            exit 1
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Projeto identificado: $PROJECT_DIR"
-
-      - name: Configurar Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Configurar Java
+      - name: Instalar Java e Android SDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
 
-      - name: Preparar Android SDK
+      - name: Instalar dependências e descarregar Godot 4.5
         shell: bash
         run: |
           set -Eeuo pipefail
-          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          if [[ ! -x "$SDKMANAGER" ]]; then
-            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit || true)"
-          fi
-          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
-            echo "::error::sdkmanager não encontrado no runner."
-            exit 1
-          fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sudo apt-get update
+          sudo apt-get install -y unzip zip xvfb
+          mkdir -p "$RUNNER_TEMP/godot" "$RUNNER_TEMP/artifacts"
+          curl --fail --location --retry 3 "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" -o "$RUNNER_TEMP/godot/godot.zip"
+          unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v*_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --retry 3 "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" -o "$RUNNER_TEMP/godot/templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot/templates"
+          unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}"
+          mkdir -p "$TEMPLATE_DIR"
+          TEMPLATE_SOURCE="$(find "$RUNNER_TEMP/godot/templates" -type f -name android_debug.apk -printf '%h\n' -quit)"
+          test -n "$TEMPLATE_SOURCE"
+          cp -a "$TEMPLATE_SOURCE"/. "$TEMPLATE_DIR"/
+          "$GODOT_BIN" --version
 
-      - name: Instalar dependências, construir web e testar protocolo
+      - name: Preparar SDK Android
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          node --version
-          npm --version
-          node -e "const p=require('./package.json'); if(!p.dependencies?.['@capacitor/core'] || !p.dependencies?.['@capacitor/android'] || !p.devDependencies?.['@capacitor/cli']) process.exit(1); console.log('Projeto:',p.name,p.version)"
-          node -e "const c=require('./capacitor.config.json'); if(!c.appId || !c.appName || c.webDir!=='www') process.exit(1); console.log('Capacitor:',c.appId,c.appName)"
-          npm install --no-audit --no-fund
-          npm run build
-          npm test
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'cmdline-tools;latest'
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF_SETTINGS
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_HOME}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          EOF_SETTINGS
 
-      - name: Criar plataforma Android limpa
+      - name: Encontrar e validar projeto
+        id: project
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          # O ZIP atual não inclui um projeto Gradle completo. Criar a plataforma é intencional.
-          if [[ -d android ]]; then
-            if [[ -s android/gradlew && -s android/settings.gradle || -s android/gradlew && -s android/settings.gradle.kts ]]; then
-              echo "Projeto Android Gradle já completo; será reutilizado."
-            else
-              echo "Pasta android incompleta; a recriar."
-              rm -rf android
-              npx cap add android
-            fi
-          else
-            npx cap add android
-          fi
+          PROJECT_DIR="$GITHUB_WORKSPACE/ultima-expedicao-3d-prototype"
+          test -s "$PROJECT_DIR/project.godot"
+          test -s "$PROJECT_DIR/export_presets.cfg"
+          grep -q '^platform="Android"' "$PROJECT_DIR/export_presets.cfg"
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Aplicar ícone personalizado
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          python3 -m pip install --quiet Pillow
-          python3 scripts/apply-android-icon.py
-          test -s android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-          test -s android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-
-      - name: Sincronizar Capacitor e validar plugin local
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-          npx cap sync android
-          test -s www/js/nearby-bridge.bundle.js
-          python3 scripts/register-nearby-android.py
-          PLUGIN_JAVA="$PROJECT_DIR/node_modules/capacitor-nearby-link/android/src/main/java/pt/ultimaexpedicao/nearby/NearbyLinkPlugin.java"
-          if [[ ! -s "$PLUGIN_JAVA" ]]; then
-            echo "::error::O plugin Nearby não foi encontrado após cap sync."
-            exit 1
-          fi
-          grep -q 'import com.getcapacitor.annotation.CapacitorPlugin;' "$PLUGIN_JAVA"
-          grep -q 'import com.getcapacitor.annotation.Permission;' "$PLUGIN_JAVA"
-          grep -q 'import com.getcapacitor.annotation.PermissionCallback;' "$PLUGIN_JAVA"
-
-      - name: Compilar APK
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR/android"
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
-          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          mkdir -p "$RUNNER_TEMP/ultima-expedicao-artifacts"
-          cp "$APK" "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk"
-          ls -lh "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk"
-
-      - name: Publicar APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: A-Ultima-Expedicao-Android-debug
-          path: ${{ runner.temp }}/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Guardar diagnóstico se falhar
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: A-Ultima-Expedicao-diagnostico-v0.12.18
-          path: |
-            ${{ runner.temp }}/ultima-expedicao/
-            ${{ runner.temp }}/zip-probe/
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Resumo final
-        if: always()
+      - name: Importar recursos Godot
         shell: bash
         env:
-          JOB_STATUS: ${{ job.status }}
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
-          {
-            echo "## A Última Expedição"
-            echo ""
-            echo "- Estado do workflow: **$JOB_STATUS**"
-            if [[ "$JOB_STATUS" == "success" && -s "$RUNNER_TEMP/ultima-expedicao-artifacts/A-Ultima-Expedicao-Android-debug.apk" ]]; then
-              echo "- APK de depuração gerada e verificada como ficheiro não vazio."
-            else
-              echo "- APK não confirmada. Abrir a primeira etapa com falha nos logs."
-            fi
-            echo "- Uma compilação bem-sucedida não substitui o teste de instalação num telemóvel."
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -Eeuo pipefail
+          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-import.log"
+
+      - name: Teste de arranque headless
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        run: |
+          set -Eeuo pipefail
+          timeout 120 "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 5 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-smoke-test.log"
+
+      - name: Exportar APK Android (debug)
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$PROJECT_DIR/build"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug 'Android' "$PROJECT_DIR/build/$APK_NAME" 2>&1 | tee "$RUNNER_TEMP/artifacts/godot-export.log"
+          test -s "$PROJECT_DIR/build/$APK_NAME"
+          cp "$PROJECT_DIR/build/$APK_NAME" "$RUNNER_TEMP/artifacts/$APK_NAME"
+          sha256sum "$RUNNER_TEMP/artifacts/$APK_NAME" | tee "$RUNNER_TEMP/artifacts/SHA256SUMS.txt"
+
+      - name: Guardar APK e logs como artefactos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-v0.1.8-Android-Build
+          path: |
+            ${{ runner.temp }}/artifacts/**
+            ultima-expedicao-3d-prototype/build/*.apk
+          if-no-files-found: warn
+          retention-days: 14
