@@ -7,7 +7,7 @@ on:
       - main
       - master
     paths:
-      - '**/*.zip'
+      - '*.zip'
       - '.github/workflows/ultima-expedicao-godot-android-completo.yml'
 
 permissions:
@@ -19,7 +19,7 @@ concurrency:
 
 env:
   GODOT_VERSION: '4.5-stable'
-  APK_NAME: 'A-Ultima-Expedicao-Godot-v0.1.20-debug.apk'
+  APK_NAME: 'A-Ultima-Expedicao-Godot-Android-debug.apk'
 
 jobs:
   build:
@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Obter código
+      - name: Obter código do repositório
         uses: actions/checkout@v4
 
       - name: Instalar utilitários
@@ -38,88 +38,81 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unzip zip xvfb file
 
-      - name: Encontrar e extrair ZIP do projeto (raiz ou subpastas)
+      - name: Encontrar ZIP do projeto na raiz (qualquer nome)
+        id: find_project
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p "$RUNNER_TEMP/zip-scan" "$RUNNER_TEMP/godot-project" "$RUNNER_TEMP/artifacts/logs"
+          mkdir -p "$RUNNER_TEMP/project-scan" "$RUNNER_TEMP/godot-project" "$RUNNER_TEMP/artifacts/logs"
 
-          # Procurar ZIPs em todo o repositório, ignorando diretórios de Git e cache.
+          # Só considera ZIPs diretamente na raiz; o nome é irrelevante.
           mapfile -d '' -t ZIPS < <(
-            find "$GITHUB_WORKSPACE" \
-              \( -type d \( -name .git -o -name .godot -o -name node_modules \) -prune \) -o \
-              \( -type f -iname '*.zip' -print0 \) | sort -z
+            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname '*.zip' -print0 | sort -z
           )
 
           if [ "${#ZIPS[@]}" -eq 0 ]; then
-            echo "::error::Não foi encontrado nenhum ficheiro ZIP no repositório."
+            echo "::error::Não existe nenhum ficheiro .zip na raiz do repositório."
+            echo "Coloca o ZIP completo do projeto Godot na raiz do GitHub e executa novamente."
             exit 1
           fi
 
-          printf 'ZIP encontrado: %s\n' "${ZIPS[@]}" | tee "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
+          printf 'ZIP na raiz: %s\n' "${ZIPS[@]}" | tee "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
 
-          # Tentar cada ZIP individualmente. Selecionar o primeiro que contenha
-          # exatamente um projeto Godot válido, sem depender do nome do ZIP.
           SELECTED=""
           PROJECT_DIR=""
+          VALID_COUNT=0
+
           for ZIP_FILE in "${ZIPS[@]}"; do
-            SCAN_DIR="$RUNNER_TEMP/zip-scan/$(printf '%s' "$ZIP_FILE" | sha256sum | cut -c1-16)"
+            SCAN_DIR="$RUNNER_TEMP/project-scan/$(printf '%s' "$ZIP_FILE" | sha256sum | cut -c1-16)"
             mkdir -p "$SCAN_DIR"
 
             if ! unzip -tq "$ZIP_FILE" >/dev/null 2>&1; then
-              echo "ZIP ignorado (arquivo inválido): $ZIP_FILE" \
-                | tee -a "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
+              echo "ZIP inválido, ignorado: $ZIP_FILE" | tee -a "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
               continue
             fi
 
             if ! unzip -q "$ZIP_FILE" -d "$SCAN_DIR" 2>>"$RUNNER_TEMP/artifacts/logs/zip-scan.txt"; then
-              echo "ZIP ignorado (não foi possível extrair): $ZIP_FILE" \
-                | tee -a "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
+              echo "Não foi possível extrair: $ZIP_FILE" | tee -a "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
               continue
             fi
 
-            mapfile -t PROJECTS < <(
-              find "$SCAN_DIR" -type f -name project.godot \
-                -not -path '*/.godot/*' -printf '%h\n'
-            )
-
-            for CANDIDATE in "${PROJECTS[@]}"; do
-              if [ -s "$CANDIDATE/project.godot" ] && [ -s "$CANDIDATE/export_presets.cfg" ] &&
+            while IFS= read -r -d '' PROJECT_FILE; do
+              CANDIDATE="$(dirname "$PROJECT_FILE")"
+              if [ -s "$CANDIDATE/project.godot" ] &&
+                 [ -s "$CANDIDATE/export_presets.cfg" ] &&
                  grep -q 'platform="Android"' "$CANDIDATE/export_presets.cfg"; then
-                if [ -n "$SELECTED" ]; then
-                  echo "::error::Foram encontrados vários ZIPs com projetos Godot Android. Deixa apenas o ZIP do projeto que queres compilar."
-                  printf 'Projeto anterior: %s\nProjeto adicional: %s\n' "$PROJECT_DIR" "$CANDIDATE"
-                  exit 1
-                fi
+                VALID_COUNT=$((VALID_COUNT + 1))
                 SELECTED="$ZIP_FILE"
                 PROJECT_DIR="$CANDIDATE"
               fi
-            done
+            done < <(find "$SCAN_DIR" -type f -name project.godot -not -path '*/.godot/*' -print0)
           done
 
-          if [ -z "$SELECTED" ] || [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Nenhum ZIP válido continha project.godot e um preset Android."
-            echo "Conteúdo ZIP / projetos detetados:" >> "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
-            find "$RUNNER_TEMP/zip-scan" -type f \( -name project.godot -o -name export_presets.cfg \) \
-              -print >> "$RUNNER_TEMP/artifacts/logs/zip-scan.txt" || true
+          if [ "$VALID_COUNT" -eq 0 ] || [ -z "$PROJECT_DIR" ]; then
+            echo "::error::Nenhum ZIP da raiz contém project.godot e export_presets.cfg com plataforma Android."
+            find "$RUNNER_TEMP/project-scan" -type f \( -name project.godot -o -name export_presets.cfg \) \
+              -print > "$RUNNER_TEMP/artifacts/logs/project-files-found.txt" || true
             exit 1
           fi
 
-          # Copiar o projeto escolhido para um caminho limpo e estável.
-          mkdir -p "$RUNNER_TEMP/godot-project/selected"
-          cp -a "$PROJECT_DIR"/. "$RUNNER_TEMP/godot-project/selected"/
-          PROJECT_DIR="$RUNNER_TEMP/godot-project/selected"
+          if [ "$VALID_COUNT" -gt 1 ]; then
+            echo "::error::Foram encontrados vários projetos Godot Android válidos nos ZIPs da raiz. Mantém apenas o ZIP do projeto que queres compilar."
+            exit 1
+          fi
 
+          cp -a "$PROJECT_DIR"/. "$RUNNER_TEMP/godot-project"/
+          echo "PROJECT_DIR=$RUNNER_TEMP/godot-project" >> "$GITHUB_ENV"
           echo "PROJECT_ZIP=$SELECTED" >> "$GITHUB_ENV"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
           {
-            echo "ZIP selecionado: $SELECTED"
-            echo "Projeto extraído: $PROJECT_DIR"
-            echo "project.godot:"
-            sed -n '1,100p' "$PROJECT_DIR/project.godot"
+            echo "ZIP escolhido: $SELECTED"
+            echo "Pasta do projeto: $RUNNER_TEMP/godot-project"
             echo
-            echo "Presets de exportação:"
-            grep -nE '^\[preset|name=|platform=|runnable=|export_path=' "$PROJECT_DIR/export_presets.cfg" || true
+            echo "Cena e configurações principais:"
+            sed -n '1,100p' "$RUNNER_TEMP/godot-project/project.godot"
+            echo
+            grep -nE '^\[preset|name=|platform=|runnable=|export_path=' \
+              "$RUNNER_TEMP/godot-project/export_presets.cfg" || true
           } | tee "$RUNNER_TEMP/artifacts/logs/project-info.txt"
 
       - name: Instalar Java 17
@@ -137,7 +130,7 @@ jobs:
 
           if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
             echo "::error::sdkmanager não encontrado em $SDK_ROOT/cmdline-tools"
-            find "$SDK_ROOT" -maxdepth 4 -type f -name sdkmanager -print 2>/dev/null || true
+            find "$SDK_ROOT" -maxdepth 5 -type f -name sdkmanager -print 2>/dev/null || true
             exit 1
           fi
 
@@ -159,7 +152,7 @@ jobs:
             "$SDKMANAGER" --list_installed
           } > "$RUNNER_TEMP/artifacts/logs/android-sdk.txt" 2>&1
 
-      - name: Instalar Godot 4.5 e templates oficiais
+      - name: Instalar Godot 4.5 e templates Android
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -170,8 +163,7 @@ jobs:
             -o "$RUNNER_TEMP/godot/godot.zip"
           unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
 
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f \
-            -name 'Godot_v*_linux.x86_64' -print -quit)"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v*_linux.x86_64' -print -quit)"
           test -n "$GODOT_BIN"
           chmod +x "$GODOT_BIN"
           echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
@@ -183,8 +175,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/godot/templates"
           unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates"
 
-          TEMPLATE_SOURCE="$(find "$RUNNER_TEMP/godot/templates" -type f \
-            -name android_debug.apk -printf '%h\n' -quit)"
+          TEMPLATE_SOURCE="$(find "$RUNNER_TEMP/godot/templates" -type f -name android_debug.apk -printf '%h\n' -quit)"
           if [ -z "$TEMPLATE_SOURCE" ]; then
             echo "::error::Template Android oficial não encontrado no pacote Godot."
             find "$RUNNER_TEMP/godot/templates" -maxdepth 5 -type f -print \
@@ -202,7 +193,6 @@ jobs:
           cp -a "$TEMPLATE_SOURCE"/. "$TEMPLATE_DIR"/
           test -s "$TEMPLATE_DIR/android_debug.apk"
           test -s "$TEMPLATE_DIR/android_release.apk"
-          echo "Templates Android instalados em $TEMPLATE_DIR"
 
       - name: Configurar caminhos Android no Godot
         shell: bash
@@ -217,7 +207,7 @@ jobs:
           export/android/java_sdk_path = "${JAVA_HOME}"
           EOF_SETTINGS
 
-      - name: Importar recursos e guardar log
+      - name: Importar recursos
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -229,6 +219,11 @@ jobs:
           if [ "$result" -ne 0 ]; then
             echo "::error::A importação de recursos falhou (código $result)."
             exit "$result"
+          fi
+          if grep -Eiq 'SCRIPT ERROR:|Parse Error:|Failed to load script|Parse error' \
+            "$RUNNER_TEMP/artifacts/logs/import.log"; then
+            echo "::error::A importação contém erros de script ou parsing."
+            exit 1
           fi
 
       - name: Validar arranque headless
@@ -245,52 +240,42 @@ jobs:
             echo "::error::O teste de arranque falhou ou excedeu 120 segundos (código $result)."
             exit "$result"
           fi
-
-          # Falhar apenas perante erros de script/carregamento que indiquem
-          # que o projeto não consegue executar. Não tratar avisos de limpeza
-          # no encerramento (ObjectDB/resources still in use) como erro fatal.
           if grep -Eiq 'SCRIPT ERROR:|Parse Error:|Failed to load script|Parse error' \
             "$RUNNER_TEMP/artifacts/logs/startup-headless.log"; then
-            echo "::error::O log de arranque contém erros de script ou de parsing."
+            echo "::error::O arranque contém erros de script ou parsing."
             exit 1
           fi
-
-          # Registar mensagens de limpeza para análise, sem falhar só por elas.
           if grep -Eiq 'ObjectDB instances leaked|resources still in use at exit' \
             "$RUNNER_TEMP/artifacts/logs/startup-headless.log"; then
-            echo "::warning::O Godot reportou recursos ainda em uso ao terminar o teste headless; ver startup-headless.log."
+            echo "::warning::O Godot reportou recursos ainda em uso no encerramento; consultar os logs."
           fi
 
-      - name: Verificar cena principal e recursos referenciados
+      - name: Verificar cena principal
         shell: bash
         run: |
           set -Eeuo pipefail
-          MAIN_SCENE="$(sed -n 's/^run\/main_scene="\(.*\)"/\1/p' "$PROJECT_DIR/project.godot" | head -n1)"
+          MAIN_SCENE="$(sed -n 's/^run\/main_scene="\([^"]*\)"/\1/p' "$PROJECT_DIR/project.godot" | head -n1)"
           if [ -z "$MAIN_SCENE" ]; then
             echo "::error::Não foi possível determinar run/main_scene em project.godot"
             exit 1
           fi
-
           if [[ "$MAIN_SCENE" != res://* ]]; then
             echo "::error::A cena principal não usa um caminho res:// válido: $MAIN_SCENE"
             exit 1
           fi
-
           MAIN_FILE="$PROJECT_DIR/${MAIN_SCENE#res://}"
           if [ ! -s "$MAIN_FILE" ]; then
             echo "::error::A cena principal não existe: $MAIN_SCENE"
             exit 1
           fi
-
           echo "Cena principal encontrada: $MAIN_SCENE" \
             | tee "$RUNNER_TEMP/artifacts/logs/main-scene-check.txt"
 
-      - name: Exportar APK Android de depuração
+      - name: Exportar APK Android
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p "$RUNNER_TEMP/artifacts"
-
           set +e
           "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
             --export-debug 'Android' "$RUNNER_TEMP/artifacts/$APK_NAME" \
@@ -302,18 +287,15 @@ jobs:
             echo "::error::A exportação do APK falhou (código $result)."
             exit "$result"
           fi
-
           if [ ! -s "$RUNNER_TEMP/artifacts/$APK_NAME" ]; then
             echo "::error::O Godot terminou sem criar um APK válido."
             exit 1
           fi
-
           file "$RUNNER_TEMP/artifacts/$APK_NAME" \
             | tee "$RUNNER_TEMP/artifacts/logs/apk-file-info.txt"
-          sha256sum "$RUNNER_TEMP/artifacts/$APK_NAME" \
-            > "$RUNNER_TEMP/artifacts/SHA256SUMS.txt"
+          sha256sum "$RUNNER_TEMP/artifacts/$APK_NAME" > "$RUNNER_TEMP/artifacts/SHA256SUMS.txt"
 
-      - name: Resumo do resultado
+      - name: Resumo do build
         if: always()
         shell: bash
         run: |
@@ -322,7 +304,8 @@ jobs:
             echo
             echo "- Commit: \`${GITHUB_SHA}\`"
             echo "- Workflow: \`${GITHUB_WORKFLOW}\`"
-            echo "- Godot pretendido: \`${GODOT_VERSION}\`"
+            echo "- Godot: \`${GODOT_VERSION}\`"
+            echo "- ZIP selecionado: \`${PROJECT_ZIP:-não definido}\`"
             echo "- APK esperado: \`${APK_NAME}\`"
             echo
             if [ -s "$RUNNER_TEMP/artifacts/$APK_NAME" ]; then
@@ -338,7 +321,7 @@ jobs:
             fi
           } > "$RUNNER_TEMP/artifacts/RELATORIO-BUILD.md"
 
-      - name: Publicar APK e logs de diagnóstico
+      - name: Publicar APK e logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
