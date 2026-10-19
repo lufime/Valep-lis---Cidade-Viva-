@@ -7,7 +7,7 @@ on:
       - main
       - master
     paths:
-      - 'A-Ultima-Expedicao-Godot-*.zip'
+      - '**/*.zip'
       - '.github/workflows/ultima-expedicao-godot-android-1.yml'
 
 permissions:
@@ -38,55 +38,89 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unzip zip xvfb file
 
-      - name: Encontrar e extrair o projeto Godot
+      - name: Encontrar e extrair ZIP do projeto (raiz ou subpastas)
         shell: bash
         run: |
           set -Eeuo pipefail
-          mapfile -t ZIPS < <(
-            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f \
-              -name 'A-Ultima-Expedicao-Godot-*.zip' -print | sort
+          mkdir -p "$RUNNER_TEMP/zip-scan" "$RUNNER_TEMP/godot-project" "$RUNNER_TEMP/artifacts/logs"
+
+          # Procurar ZIPs em todo o repositório, ignorando diretórios de Git e cache.
+          mapfile -d '' -t ZIPS < <(
+            find "$GITHUB_WORKSPACE" \
+              \( -type d \( -name .git -o -name .godot -o -name node_modules \) -prune \) -o \
+              \( -type f -iname '*.zip' -print0 \) | sort -z
           )
 
-          if [ "${#ZIPS[@]}" -ne 1 ]; then
-            echo "::error::É necessário exatamente um ZIP A-Ultima-Expedicao-Godot-*.zip na raiz. Encontrados: ${#ZIPS[@]}"
-            printf '%s\n' "${ZIPS[@]:-nenhum}"
+          if [ "${#ZIPS[@]}" -eq 0 ]; then
+            echo "::error::Não foi encontrado nenhum ficheiro ZIP no repositório."
             exit 1
           fi
 
-          mkdir -p "$RUNNER_TEMP/godot-project" "$RUNNER_TEMP/artifacts/logs"
-          echo "PROJECT_ZIP=${ZIPS[0]}" >> "$GITHUB_ENV"
-          unzip -q "${ZIPS[0]}" -d "$RUNNER_TEMP/godot-project"
+          printf 'ZIP encontrado: %s\n' "${ZIPS[@]}" | tee "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
 
-          mapfile -t PROJECTS < <(
-            find "$RUNNER_TEMP/godot-project" -type f \
-              -name project.godot -not -path '*/.godot/*' -printf '%h\n'
-          )
+          # Tentar cada ZIP individualmente. Selecionar o primeiro que contenha
+          # exatamente um projeto Godot válido, sem depender do nome do ZIP.
+          SELECTED=""
+          PROJECT_DIR=""
+          for ZIP_FILE in "${ZIPS[@]}"; do
+            SCAN_DIR="$RUNNER_TEMP/zip-scan/$(printf '%s' "$ZIP_FILE" | sha256sum | cut -c1-16)"
+            mkdir -p "$SCAN_DIR"
 
-          if [ "${#PROJECTS[@]}" -ne 1 ]; then
-            echo "::error::Esperava exatamente um project.godot; encontrados: ${#PROJECTS[@]}"
-            find "$RUNNER_TEMP/godot-project" -name project.godot -print
+            if ! unzip -tq "$ZIP_FILE" >/dev/null 2>&1; then
+              echo "ZIP ignorado (arquivo inválido): $ZIP_FILE" \
+                | tee -a "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
+              continue
+            fi
+
+            if ! unzip -q "$ZIP_FILE" -d "$SCAN_DIR" 2>>"$RUNNER_TEMP/artifacts/logs/zip-scan.txt"; then
+              echo "ZIP ignorado (não foi possível extrair): $ZIP_FILE" \
+                | tee -a "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
+              continue
+            fi
+
+            mapfile -t PROJECTS < <(
+              find "$SCAN_DIR" -type f -name project.godot \
+                -not -path '*/.godot/*' -printf '%h\n'
+            )
+
+            for CANDIDATE in "${PROJECTS[@]}"; do
+              if [ -s "$CANDIDATE/project.godot" ] && [ -s "$CANDIDATE/export_presets.cfg" ] &&
+                 grep -q 'platform="Android"' "$CANDIDATE/export_presets.cfg"; then
+                if [ -n "$SELECTED" ]; then
+                  echo "::error::Foram encontrados vários ZIPs com projetos Godot Android. Deixa apenas o ZIP do projeto que queres compilar."
+                  printf 'Projeto anterior: %s\nProjeto adicional: %s\n' "$PROJECT_DIR" "$CANDIDATE"
+                  exit 1
+                fi
+                SELECTED="$ZIP_FILE"
+                PROJECT_DIR="$CANDIDATE"
+              fi
+            done
+          done
+
+          if [ -z "$SELECTED" ] || [ -z "$PROJECT_DIR" ]; then
+            echo "::error::Nenhum ZIP válido continha project.godot e um preset Android."
+            echo "Conteúdo ZIP / projetos detetados:" >> "$RUNNER_TEMP/artifacts/logs/zip-scan.txt"
+            find "$RUNNER_TEMP/zip-scan" -type f \( -name project.godot -o -name export_presets.cfg \) \
+              -print >> "$RUNNER_TEMP/artifacts/logs/zip-scan.txt" || true
             exit 1
           fi
 
-          PROJECT_DIR="${PROJECTS[0]}"
-          test -s "$PROJECT_DIR/project.godot"
-          test -s "$PROJECT_DIR/export_presets.cfg"
-          grep -q 'platform="Android"' "$PROJECT_DIR/export_presets.cfg" || {
-            echo "::error::Não foi encontrado um preset Android em export_presets.cfg"
-            exit 1
-          }
+          # Copiar o projeto escolhido para um caminho limpo e estável.
+          mkdir -p "$RUNNER_TEMP/godot-project/selected"
+          cp -a "$PROJECT_DIR"/. "$RUNNER_TEMP/godot-project/selected"/
+          PROJECT_DIR="$RUNNER_TEMP/godot-project/selected"
 
+          echo "PROJECT_ZIP=$SELECTED" >> "$GITHUB_ENV"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Projeto encontrado em: $PROJECT_DIR"
           {
-            echo "ZIP: ${ZIPS[0]}"
-            echo "PROJECT_DIR: $PROJECT_DIR"
+            echo "ZIP selecionado: $SELECTED"
+            echo "Projeto extraído: $PROJECT_DIR"
             echo "project.godot:"
             sed -n '1,100p' "$PROJECT_DIR/project.godot"
             echo
             echo "Presets de exportação:"
             grep -nE '^\[preset|name=|platform=|runnable=|export_path=' "$PROJECT_DIR/export_presets.cfg" || true
-          } > "$RUNNER_TEMP/artifacts/logs/project-info.txt"
+          } | tee "$RUNNER_TEMP/artifacts/logs/project-info.txt"
 
       - name: Instalar Java 17
         uses: actions/setup-java@v4
