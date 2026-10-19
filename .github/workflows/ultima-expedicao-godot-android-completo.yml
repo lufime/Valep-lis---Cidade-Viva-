@@ -8,7 +8,7 @@ on:
       - master
     paths:
       - '**/*.zip'
-      - '.github/workflows/ultima-expedicao-godot-android-1.yml'
+      - '.github/workflows/ultima-expedicao-godot-android-completo.yml'
 
 permissions:
   contents: read
