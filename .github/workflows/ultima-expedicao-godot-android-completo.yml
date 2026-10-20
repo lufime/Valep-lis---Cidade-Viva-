@@ -4,16 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       zip_path:
-        description: 'Caminho do ZIP no repositório; vazio = procurar automaticamente'
+        description: "Caminho do ZIP do projeto no repositório (deixa vazio para procurar automaticamente)"
         required: false
         type: string
-        default: ''
+        default: ""
   push:
     paths:
-      - '.github/workflows/blender-from-project-zip.yml'
-      - 'assets/**'
-      - '*.zip'
-      - '**/*.zip'
+      - ".github/workflows/blender-from-project-zip.yml"
+      - "assets/**"
+      - "*.zip"
 
 permissions:
   contents: read
@@ -27,6 +26,7 @@ jobs:
     name: Validar ZIP e gerar ficheiros Blender
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+
     steps:
       - name: Obter repositório
         uses: actions/checkout@v4
@@ -38,58 +38,75 @@ jobs:
           sudo apt-get install -y blender unzip zip
           blender --background --version | tee blender-version.log
 
-      - name: Encontrar, validar e extrair ZIP
+      - name: Validar e extrair ZIP do projeto
         env:
-          INPUT_ZIP_PATH: ${{ inputs.zip_path }}
+          ZIP_INPUT: ${{ inputs.zip_path }}
         run: |
           set -euo pipefail
-          ZIP_PATH="${INPUT_ZIP_PATH:-}"
+
+          ZIP_PATH="${ZIP_INPUT:-}"
+
+          # Se não foi indicado um caminho, procurar um ZIP na raiz e em assets/.
           if [ -z "$ZIP_PATH" ]; then
-            ZIP_PATH="$(find . -maxdepth 2 -type f -iname '*.zip' -not -path './.git/*' -print | sort | head -n 1 || true)"
+            ZIP_PATH="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
           fi
+          if [ -z "$ZIP_PATH" ]; then
+            ZIP_PATH="$(find assets -maxdepth 3 -type f -iname '*.zip' -print -quit 2>/dev/null || true)"
+          fi
+
           if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
-            echo '::error::Não foi encontrado um ZIP. Coloca o ZIP da fonte na raiz ou em assets/, faz commit e volta a executar.'
-            echo 'ZIPs encontrados:'
-            find . -maxdepth 5 -type f -iname '*.zip' -not -path './.git/*' -print | sort || true
+            echo "::error::Não foi encontrado um ZIP no caminho indicado, na raiz ou em assets/."
+            echo "Guarda e faz commit do ZIP da fonte no repositório, ou define zip_path em Run workflow."
+            find . -maxdepth 4 -type f \( -iname '*.zip' -o -iname '*.glb' \) -print | sort || true
             exit 1
           fi
-          echo "ZIP_PATH=$ZIP_PATH" | tee zip-selected.log
+
+          echo "ZIP selecionado: $ZIP_PATH"
           unzip -t "$ZIP_PATH" | tee zip-integrity.log
           mkdir -p entrada_zip
           unzip -q "$ZIP_PATH" -d entrada_zip
           find entrada_zip -type f -print | sort | tee zip-files.txt
+
           GLB_PATH="$(find entrada_zip -type f -name 'station_corridor_kit.glb' -print -quit)"
           if [ -z "$GLB_PATH" ]; then
             GLB_PATH="$(find entrada_zip -type f -iname '*.glb' -print -quit)"
           fi
           if [ -z "$GLB_PATH" ]; then
-            echo '::error::O ZIP foi extraído, mas não contém qualquer ficheiro .glb para importar.'
+            echo "::error::O ZIP não contém qualquer ficheiro GLB para importar."
             exit 1
           fi
+
           echo "GLB_PATH=$GLB_PATH" >> "$GITHUB_ENV"
           echo "GLB encontrado: $GLB_PATH"
 
       - name: Criar script de conversão GLB para BLEND
         run: |
           cat > converter_glb.py <<'PY'
-          import bpy, os
-          source = os.path.abspath(os.environ['GLB_PATH'])
-          outdir = os.path.abspath('saida_blender')
+          import bpy
+          import os
+
+          source = os.path.abspath(os.environ["GLB_PATH"])
+          outdir = os.path.abspath("saida_blender")
           os.makedirs(outdir, exist_ok=True)
+
           if not os.path.isfile(source):
-              raise FileNotFoundError('GLB de origem não encontrado: ' + source)
+              raise FileNotFoundError("GLB de origem não encontrado: " + source)
+
           bpy.ops.wm.read_factory_settings(use_empty=True)
           bpy.ops.import_scene.gltf(filepath=source)
+
           if not bpy.context.scene.objects:
-              raise RuntimeError('A importação não criou objetos Blender.')
-          blend_path = os.path.join(outdir, 'A_Ultima_Expedicao_Kit_3D.blend')
-          glb_path = os.path.join(outdir, 'A_Ultima_Expedicao_Kit_3D.glb')
-          object_count = len(bpy.context.scene.objects)
+              raise RuntimeError("A importação não criou objetos Blender.")
+
+          blend_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.blend")
+          glb_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.glb")
+
           bpy.ops.wm.save_as_mainfile(filepath=blend_path)
-          bpy.ops.export_scene.gltf(filepath=glb_path, export_format='GLB')
-          print('OBJECT_COUNT=', object_count)
-          print('BLEND_OUTPUT=', blend_path)
-          print('GLB_OUTPUT=', glb_path)
+          bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
+
+          print("OBJECT_COUNT=", len(bpy.context.scene.objects))
+          print("BLEND_OUTPUT=", blend_path)
+          print("GLB_OUTPUT=", glb_path)
           PY
 
       - name: Converter GLB para projeto Blender editável
@@ -99,21 +116,24 @@ jobs:
           set -euo pipefail
           blender --background --python converter_glb.py 2>&1 | tee blender-build.log
 
-      - name: Validar ficheiros de saída
+      - name: Validar saídas geradas
         run: |
           set -euo pipefail
           test -s saida_blender/A_Ultima_Expedicao_Kit_3D.blend
           test -s saida_blender/A_Ultima_Expedicao_Kit_3D.glb
           ls -lh saida_blender/
-          echo 'PASS: ficheiros presentes e não vazios; inspeção visual não executada.'
+          echo "PASS: os ficheiros existem e não estão vazios; é necessária inspeção visual para validar a qualidade."
 
-      - name: Preparar resultados e logs
+      - name: Preparar pacote de resultados e logs
         if: always()
         run: |
           mkdir -p entrega
-          cp blender-version.log zip-selected.log zip-integrity.log zip-files.txt blender-build.log entrega/ 2>/dev/null || true
+          cp blender-version.log entrega/ 2>/dev/null || true
+          cp zip-integrity.log entrega/ 2>/dev/null || true
+          cp zip-files.txt entrega/ 2>/dev/null || true
+          cp blender-build.log entrega/ 2>/dev/null || true
           cp -r saida_blender entrega/ 2>/dev/null || true
-          zip -qr A_Ultima_Expedicao_Blender_Resultados.zip entrega || true
+          zip -qr A_Ultima_Expedicao_Blender_Resultados.zip entrega
 
       - name: Publicar resultados e logs
         if: always()
@@ -123,7 +143,6 @@ jobs:
           path: |
             A_Ultima_Expedicao_Blender_Resultados.zip
             blender-version.log
-            zip-selected.log
             zip-integrity.log
             zip-files.txt
             blender-build.log
