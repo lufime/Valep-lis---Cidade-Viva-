@@ -1,0 +1,114 @@
+name: A Última Expedição — Validar e integrar Blender
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'assets/station_corridor_kit.glb'
+      - 'assets/station_corridor_kit.blend'
+      - 'tools/blender_assets.py'
+      - '.github/workflows/blender-assets.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultima-expedicao-blender-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Blender e ferramentas
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y blender python3 zip unzip
+          blender --background --version
+
+      - name: Verificar recursos de entrada
+        run: |
+          set -euo pipefail
+          test -s assets/station_corridor_kit.glb
+          test -s assets/station_corridor_kit.blend
+          python3 - <<'PY'
+          import os, struct, json
+          p='assets/station_corridor_kit.glb'
+          with open(p,'rb') as f:
+              magic, version, length=struct.unpack('<4sII',f.read(12))
+              assert magic == b'glTF', 'Assinatura GLB inválida'
+              assert version == 2, f'Versão GLB inesperada: {version}'
+              assert length == os.path.getsize(p), 'Tamanho GLB inconsistente'
+              n, typ=struct.unpack('<I4s',f.read(8))
+              assert typ == b'JSON', 'Chunk JSON em falta'
+              doc=json.loads(f.read(n).decode('utf-8'))
+              assert doc.get('meshes'), 'GLB sem malhas'
+              print('GLB_STATIC_PASS=True')
+              print('NODES=',len(doc.get('nodes',[])))
+              print('MESHES=',len(doc.get('meshes',[])))
+              print('MATERIALS=',len(doc.get('materials',[])))
+          PY
+
+      - name: Reimportar GLB e gerar BLEND de validação
+        run: |
+          set -euo pipefail
+          mkdir -p blender_out
+          cat > /tmp/import_glb.py <<'PY'
+          import bpy, os
+          src=os.path.abspath('assets/station_corridor_kit.glb')
+          out=os.path.abspath('blender_out/station_corridor_kit.blend')
+          bpy.ops.wm.read_factory_settings(use_empty=True)
+          bpy.ops.import_scene.gltf(filepath=src)
+          objects=list(bpy.context.scene.objects)
+          meshes=[o for o in objects if o.type=='MESH']
+          assert objects, 'Importação GLB não criou objetos'
+          assert meshes, 'Importação GLB não criou malhas'
+          bpy.ops.wm.save_as_mainfile(filepath=out)
+          print('BLEND_GENERATION_PASS=True')
+          print('OBJECTS=',len(objects))
+          print('MESHES=',len(meshes))
+          print('MATERIALS=',len(bpy.data.materials))
+          PY
+          blender --background --python /tmp/import_glb.py 2>&1 | tee blender-import.log
+          grep -q 'BLEND_GENERATION_PASS=True' blender-import.log
+
+      - name: Reabrir e validar BLEND gerado
+        run: |
+          set -euo pipefail
+          cat > /tmp/check_blend.py <<'PY'
+          import bpy, os
+          objects=list(bpy.context.scene.objects)
+          meshes=[o for o in objects if o.type=='MESH']
+          assert objects, 'BLEND reabriu sem objetos'
+          assert meshes, 'BLEND reabriu sem malhas'
+          print('BLEND_REOPEN_PASS=True')
+          print('REOPEN_OBJECTS=',len(objects))
+          print('REOPEN_MESHES=',len(meshes))
+          PY
+          blender --background blender_out/station_corridor_kit.blend --python /tmp/check_blend.py 2>&1 | tee blender-reopen.log
+          grep -q 'BLEND_REOPEN_PASS=True' blender-reopen.log
+
+      - name: Empacotar projeto completo com Blender e GLB
+        run: |
+          set -euo pipefail
+          mkdir -p entrega
+          cp blender_out/station_corridor_kit.blend assets/station_corridor_kit.blend
+          cp blender-import.log blender-reopen.log entrega/
+          cp docs/BLENDER_ASSETS.md entrega/
+          zip -qr A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO.zip             project.godot export_presets.cfg README.md VERSION.txt assets scenes scripts audio art docs tests .github
+          unzip -t A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO.zip
+
+      - name: Carregar projeto completo e logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO
+          path: |
+            A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO.zip
+            blender-import.log
+            blender-reopen.log
+          if-no-files-found: error
