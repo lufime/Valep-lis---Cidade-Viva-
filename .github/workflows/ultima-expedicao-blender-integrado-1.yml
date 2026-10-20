@@ -19,14 +19,15 @@ jobs:
   build-apk:
     name: Importar, validar e exportar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
 
     env:
       GODOT_VERSION: 4.5-stable
-      APK_PATH: ${{ github.workspace }}/build/A-Ultima-Expedicao-v0.1.107-android.apk
+      APK_NAME: A-Ultima-Expedicao-v0.1.114-android.apk
+      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.114-Pacote-Blender-Exterior-Instalacoes-Criatura-Jogadores.zip
 
     steps:
-      - name: Obter projeto
+      - name: Obter repositório
         uses: actions/checkout@v4
 
       - name: Preparar Java
@@ -35,118 +36,164 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Preparar Android SDK sem pacote legado tools
+      - name: Preparar Android SDK
         shell: bash
         run: |
           set -euo pipefail
           ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          ANDROID_SDK_ROOT="$ANDROID_HOME"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
-            echo "ERRO: sdkmanager não encontrado em $ANDROID_HOME/cmdline-tools"
+            echo "::error::sdkmanager não encontrado em $ANDROID_HOME/cmdline-tools"
             exit 1
           fi
-          echo "SDKMANAGER=$SDKMANAGER"
+
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
           test -x "$ANDROID_HOME/platform-tools/adb"
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.0"
 
-      - name: Instalar Godot 4.5 (binário oficial)
+      - name: Instalar Godot 4.5 oficial
         shell: bash
         run: |
           set -euo pipefail
-          GODOT_ARCHIVE="$RUNNER_TEMP/godot-4.5-linux.zip"
+          ARCHIVE="$RUNNER_TEMP/godot-4.5-linux.zip"
           curl --fail --location --retry 3 \
-            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip" \
-            -o "$GODOT_ARCHIVE"
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" \
+            -o "$ARCHIVE"
           mkdir -p "$RUNNER_TEMP/godot-bin"
-          unzip -q "$GODOT_ARCHIVE" -d "$RUNNER_TEMP/godot-bin"
+          unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/godot-bin"
           GODOT_BIN="$(find "$RUNNER_TEMP/godot-bin" -maxdepth 1 -type f -name 'Godot_v4.5-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
+          if [ -z "$GODOT_BIN" ]; then
+            echo "::error::Não foi encontrado o executável Godot esperado no arquivo oficial."
+            find "$RUNNER_TEMP/godot-bin" -maxdepth 2 -type f -print
+            exit 1
+          fi
           chmod +x "$GODOT_BIN"
           ln -sf "$GODOT_BIN" "$RUNNER_TEMP/godot-bin/godot"
           echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
           "$GODOT_BIN" --version
 
-      - name: Extrair ZIP e localizar projeto Godot
+      - name: Localizar ZIP exato do projeto
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -print -quit)"
-          if [ -z "$ARCHIVE" ]; then
-            echo "ERRO: não foi encontrado nenhum ZIP do projeto na raiz do repositório."
+          ARCHIVE="$GITHUB_WORKSPACE/$PROJECT_ZIP_NAME"
+          if [ ! -s "$ARCHIVE" ]; then
+            echo "::error::Não foi encontrado o ZIP esperado: $PROJECT_ZIP_NAME"
+            echo "ZIPs disponíveis na raiz:"
+            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -printf '%f\n' || true
+            echo "Adiciona o ZIP da versão correta à raiz do repositório ou atualiza PROJECT_ZIP_NAME."
             exit 1
           fi
+
           EXTRACT_DIR="$RUNNER_TEMP/ultima-expedicao-source"
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
-          PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name project.godot -print -quit)"
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "ERRO: o ZIP não contém project.godot."
-            find "$EXTRACT_DIR" -maxdepth 4 -print | head -n 200
+
+          mapfile -t PROJECT_FILES < <(find "$EXTRACT_DIR" -type f -name project.godot -print)
+          if [ "${#PROJECT_FILES[@]}" -ne 1 ]; then
+            echo "::error::Esperava encontrar exatamente um project.godot; encontrei ${#PROJECT_FILES[@]}."
+            printf '%s\n' "${PROJECT_FILES[@]:-}"
             exit 1
           fi
-          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
-          test -s "$PROJECT_DIR/export_presets.cfg" || { echo "ERRO: falta export_presets.cfg em $PROJECT_DIR"; exit 1; }
+
+          PROJECT_DIR="$(dirname "${PROJECT_FILES[0]}")"
+          test -s "$PROJECT_DIR/export_presets.cfg" || {
+            echo "::error::Falta export_presets.cfg em $PROJECT_DIR"
+            exit 1
+          }
+
+          if ! grep -Eq '^\[preset\.[0-9]+\]' "$PROJECT_DIR/export_presets.cfg"; then
+            echo "::error::export_presets.cfg não contém qualquer preset exportável."
+            exit 1
+          fi
+          if ! grep -E '^\[preset\.[0-9]+\]' "$PROJECT_DIR/export_presets.cfg" -A 8 | grep -qi 'Android'; then
+            echo "::error::Não foi encontrado um preset Android em export_presets.cfg."
+            exit 1
+          fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Projeto Godot localizado em: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR" | head -n 80
           mkdir -p "$GITHUB_WORKSPACE/build"
+          echo "Projeto selecionado: $PROJECT_DIR"
+          echo "ZIP selecionado: $ARCHIVE"
 
-      - name: Preparar templates de exportação
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.local/share/godot/export_templates"
-          # Download the matching official export templates archive.
-          curl --fail --location --retry 3 \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
-            -o "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/godot-templates"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/godot-templates"
-          TEMPLATE_VERSION="4.5.stable"
-          mkdir -p "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}"
-          cp -a "$RUNNER_TEMP/godot-templates/templates/." \
-            "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}/"
-          test -d "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}"
-
-      - name: Auditar regras e recursos
+      - name: Auditar recursos 3D necessários
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
+
+          echo "Modelos GLB encontrados:"
+          find . -type f -iname '*.glb' -print | sort || true
+
+          # Os .blend são fontes editáveis do Blender. Não são executados pelo Godot
+          # e não devem, por si só, bloquear a exportação Android.
+          BLEND_COUNT="$(find . -type f -iname '*.blend' | wc -l)"
+          GLB_COUNT="$(find . -type f -iname '*.glb' | wc -l)"
+          echo "Ficheiros Blender (.blend): $BLEND_COUNT"
+          echo "Modelos exportados (.glb): $GLB_COUNT"
+
+          if [ "$GLB_COUNT" -eq 0 ]; then
+            echo "::error::Não existem modelos .glb no projeto; os modelos 3D exportados são necessários para o jogo."
+            exit 1
+          fi
+
           if [ -f tests/quality_audit.py ]; then
             python3 tests/quality_audit.py
           else
-            echo "AVISO: tests/quality_audit.py não existe; auditoria estática não foi executada."
+            echo "::warning::tests/quality_audit.py não existe; auditoria específica do projeto não foi executada."
           fi
+
+      - name: Preparar templates oficiais de exportação
+        shell: bash
+        run: |
+          set -euo pipefail
+          TEMPLATE_VERSION="4.5.stable"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/$TEMPLATE_VERSION"
+          mkdir -p "$RUNNER_TEMP/godot-templates" "$TEMPLATE_DIR"
+
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
+            -o "$RUNNER_TEMP/godot-templates.tpz"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/godot-templates"
+          test -d "$RUNNER_TEMP/godot-templates/templates"
+          cp -a "$RUNNER_TEMP/godot-templates/templates/." "$TEMPLATE_DIR/"
+          test -n "$(find "$TEMPLATE_DIR" -maxdepth 1 -type f -print -quit)"
 
       - name: Importar recursos Godot
         shell: bash
         run: |
           set -euo pipefail
-          # Evita que a fonte editável do Blender seja importada pelo Godot.
-          if find "$PROJECT_DIR" -type f -name '*.blend' -print -quit | grep -q .; then
-            echo "ERRO: existe um .blend dentro da raiz do projeto Godot."
-            echo "O .blend deve ficar fora da pasta do projeto; manter o .glb em assets/."
+          set -o pipefail
+          timeout 10m godot --headless --editor --path "$PROJECT_DIR" --import --verbose \
+            2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
+
+          if grep -E '(^|[[:space:]])(SCRIPT ERROR|Parse Error|Failed to load script|ERROR:)' \
+            "$GITHUB_WORKSPACE/godot-import.log"; then
+            echo "::error::Foram encontrados erros no log de importação."
             exit 1
           fi
-          timeout 8m godot --headless --editor --path "$PROJECT_DIR" --import --verbose 2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
-          if grep -E 'ERROR|Parse Error|SCRIPT ERROR' "$GITHUB_WORKSPACE/godot-import.log"; then exit 1; fi
 
       - name: Teste de arranque headless
-        run: timeout 2m godot --headless --path "$PROJECT_DIR" --quit-after 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          timeout 2m godot --headless --path "$PROJECT_DIR" --quit-after 5 \
+            2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
 
       - name: Exportar APK Android
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build
-          godot --headless --path "$PROJECT_DIR" --export-debug "Android" "$APK_PATH" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
+          set -o pipefail
+          APK_PATH="$GITHUB_WORKSPACE/build/$APK_NAME"
+          godot --headless --path "$PROJECT_DIR" --export-debug "Android" "$APK_PATH" \
+            2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
           test -s "$APK_PATH"
           file "$APK_PATH"
           echo "APK_EXPORT_PASS=true"
@@ -155,10 +202,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-v0.1.107-Android
+          name: A-Ultima-Expedicao-v0.1.114-Android
           path: |
             build/*.apk
             godot-import.log
+            godot-startup.log
             godot-export.log
           if-no-files-found: warn
           retention-days: 14
