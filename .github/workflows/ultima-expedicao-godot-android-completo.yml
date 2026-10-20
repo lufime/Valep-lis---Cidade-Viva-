@@ -1,4 +1,4 @@
-name: A Última Expedição — Gerar BLEND a partir do ZIP
+name: A Última Expedição — Gerar e validar BLEND a partir do ZIP
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   generate-blend:
-    name: Validar ZIP e gerar ficheiros Blender
+    name: Gerar e testar ficheiros Blender
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -32,7 +32,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y blender python3-numpy unzip zip
           blender --background --version | tee blender-version.log
-          echo "Verificar se o NumPy está disponível no Python do Blender..."
           blender --background --python-expr "import numpy; print('NUMPY_OK', numpy.__version__)" 2>&1 | tee numpy-check.log
 
       - name: Selecionar, validar e extrair o ZIP do projeto
@@ -74,7 +73,6 @@ jobs:
           fi
           if [ -z "$GLB_PATH" ]; then
             echo "::error::O ZIP de origem não contém nenhum ficheiro .glb."
-            echo "Conteúdo da pasta assets, se existir:"
             find entrada_zip -type f -ipath '*/assets/*' -print | sort || true
             exit 1
           fi
@@ -101,15 +99,21 @@ jobs:
           bpy.ops.import_scene.gltf(filepath=source)
 
           objects = list(bpy.context.scene.objects)
+          meshes = [obj for obj in objects if obj.type == "MESH"]
+          materials = list(bpy.data.materials)
           if not objects:
               raise RuntimeError("A importação do GLB não criou objetos Blender.")
+          if not meshes:
+              raise RuntimeError("A importação do GLB não criou malhas 3D.")
 
           blend_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.blend")
           glb_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.glb")
           bpy.ops.wm.save_as_mainfile(filepath=blend_path)
           bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
 
-          print("OBJECT_COUNT=", len(objects))
+          print("IMPORT_OBJECT_COUNT=", len(objects))
+          print("IMPORT_MESH_COUNT=", len(meshes))
+          print("IMPORT_MATERIAL_COUNT=", len(materials))
           print("BLEND_OUTPUT=", blend_path)
           print("GLB_OUTPUT=", glb_path)
           PY
@@ -119,13 +123,87 @@ jobs:
           set -euo pipefail
           blender --background --python converter_glb.py 2>&1 | tee blender-build.log
 
-      - name: Validar ficheiros gerados
+      - name: Criar teste de reabertura do BLEND
+        run: |
+          cat > validar_blend.py <<'PY'
+          import bpy
+          import os
+
+          blend_path = os.path.abspath("saida_blender/A_Ultima_Expedicao_Kit_3D.blend")
+          validation_copy = os.path.abspath("saida_blender/A_Ultima_Expedicao_Kit_3D_VALIDADO.blend")
+
+          if not os.path.isfile(blend_path) or os.path.getsize(blend_path) == 0:
+              raise RuntimeError("O ficheiro BLEND não existe ou está vazio.")
+
+          # O Blender é iniciado com o ficheiro BLEND como argumento:
+          # este processo só chega aqui depois de o ficheiro ser reaberto.
+          objects = list(bpy.context.scene.objects)
+          meshes = [obj for obj in objects if obj.type == "MESH"]
+          materials = list(bpy.data.materials)
+
+          if not objects:
+              raise RuntimeError("REOPEN_FAIL: o BLEND reabriu sem objetos na cena.")
+          if not meshes:
+              raise RuntimeError("REOPEN_FAIL: o BLEND reabriu sem malhas 3D.")
+
+          # Guardar uma cópia de validação prova que o ficheiro reaberto pode
+          # ser gravado novamente sem substituir o original.
+          bpy.ops.wm.save_as_mainfile(filepath=validation_copy)
+
+          if not os.path.isfile(validation_copy) or os.path.getsize(validation_copy) == 0:
+              raise RuntimeError("SAVE_AGAIN_FAIL: não foi possível guardar a cópia validada.")
+
+          print("REOPEN_PASS=True")
+          print("REOPEN_OBJECT_COUNT=", len(objects))
+          print("REOPEN_MESH_COUNT=", len(meshes))
+          print("REOPEN_MATERIAL_COUNT=", len(materials))
+          print("SAVE_AGAIN_PASS=True")
+          print("VALIDATED_COPY=", validation_copy)
+          PY
+
+      - name: Reabrir, verificar e guardar novamente o BLEND
+        run: |
+          set -euo pipefail
+          blender --background saida_blender/A_Ultima_Expedicao_Kit_3D.blend --python validar_blend.py 2>&1 | tee blender-reopen-validation.log
+          grep -q 'REOPEN_PASS=True' blender-reopen-validation.log
+          grep -q 'SAVE_AGAIN_PASS=True' blender-reopen-validation.log
+
+      - name: Validar ficheiros e estrutura do GLB
         run: |
           set -euo pipefail
           test -s saida_blender/A_Ultima_Expedicao_Kit_3D.blend
           test -s saida_blender/A_Ultima_Expedicao_Kit_3D.glb
+          test -s saida_blender/A_Ultima_Expedicao_Kit_3D_VALIDADO.blend
+          python3 - <<'PY' | tee glb-validation.log
+          import json, struct
+          path = "saida_blender/A_Ultima_Expedicao_Kit_3D.glb"
+          with open(path, "rb") as f:
+              header = f.read(12)
+              if len(header) != 12:
+                  raise SystemExit("GLB_FAIL: cabeçalho incompleto")
+              magic, version, declared_length = struct.unpack("<4sII", header)
+              if magic != b"glTF":
+                  raise SystemExit("GLB_FAIL: assinatura glTF inválida")
+              if version != 2:
+                  raise SystemExit(f"GLB_FAIL: versão inesperada {version}")
+              if declared_length != __import__("os").path.getsize(path):
+                  raise SystemExit("GLB_FAIL: tamanho declarado não corresponde ao tamanho real")
+              chunk_header = f.read(8)
+              if len(chunk_header) != 8:
+                  raise SystemExit("GLB_FAIL: chunk JSON em falta")
+              chunk_length, chunk_type = struct.unpack("<I4s", chunk_header)
+              if chunk_type != b"JSON":
+                  raise SystemExit("GLB_FAIL: primeiro chunk não é JSON")
+              raw_json = f.read(chunk_length)
+              doc = json.loads(raw_json.decode("utf-8"))
+              print("GLB_VALIDATION_PASS=True")
+              print("GLB_VERSION=", version)
+              print("GLB_NODE_COUNT=", len(doc.get("nodes", [])))
+              print("GLB_MESH_COUNT=", len(doc.get("meshes", [])))
+              print("GLB_MATERIAL_COUNT=", len(doc.get("materials", [])))
+          PY
           ls -lh saida_blender/
-          echo "PASS: os dois ficheiros existem e não estão vazios; a qualidade visual ainda requer inspeção."
+          echo "PASS: conversão, reabertura do BLEND, gravação de cópia e estrutura básica do GLB verificadas."
 
       - name: Preparar pacote de resultados e logs
         if: always()
@@ -136,6 +214,8 @@ jobs:
           cp zip-integrity.log entrega/ 2>/dev/null || true
           cp zip-files.txt entrega/ 2>/dev/null || true
           cp blender-build.log entrega/ 2>/dev/null || true
+          cp blender-reopen-validation.log entrega/ 2>/dev/null || true
+          cp glb-validation.log entrega/ 2>/dev/null || true
           cp -r saida_blender entrega/ 2>/dev/null || true
           zip -qr A_Ultima_Expedicao_Blender_Resultados.zip entrega
 
