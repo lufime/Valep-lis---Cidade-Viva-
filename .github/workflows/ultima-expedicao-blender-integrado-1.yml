@@ -1,114 +1,126 @@
-name: A Última Expedição — Validar e integrar Blender
+name: A Última Expedição — Build APK Android (Godot 4.5)
 
 on:
   workflow_dispatch:
   push:
+    branches: [main, master]
     paths:
-      - 'assets/station_corridor_kit.glb'
-      - 'assets/station_corridor_kit.blend'
-      - 'tools/blender_assets.py'
-      - '.github/workflows/blender-assets.yml'
+      - '**'
+      - '.github/workflows/build-android.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ultima-expedicao-blender-${{ github.ref }}
+  group: ultima-expedicao-android-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  validate-and-package:
+  build-apk:
+    name: Importar, validar e exportar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
+
+    env:
+      GODOT_VERSION: 4.5-stable
+      APK_PATH: build/A-Ultima-Expedicao-v0.1.107-android.apk
+
     steps:
-      - name: Checkout
+      - name: Obter projeto
         uses: actions/checkout@v4
 
-      - name: Instalar Blender e ferramentas
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes Android necessários
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y blender python3 zip unzip
-          blender --background --version
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses >/dev/null
 
-      - name: Verificar recursos de entrada
+      - name: Instalar Godot 4.5
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.5-stable
+          use-dotnet: false
+
+      - name: Verificar Godot e projeto
         run: |
           set -euo pipefail
-          test -s assets/station_corridor_kit.glb
-          test -s assets/station_corridor_kit.blend
-          python3 - <<'PY'
-          import os, struct, json
-          p='assets/station_corridor_kit.glb'
-          with open(p,'rb') as f:
-              magic, version, length=struct.unpack('<4sII',f.read(12))
-              assert magic == b'glTF', 'Assinatura GLB inválida'
-              assert version == 2, f'Versão GLB inesperada: {version}'
-              assert length == os.path.getsize(p), 'Tamanho GLB inconsistente'
-              n, typ=struct.unpack('<I4s',f.read(8))
-              assert typ == b'JSON', 'Chunk JSON em falta'
-              doc=json.loads(f.read(n).decode('utf-8'))
-              assert doc.get('meshes'), 'GLB sem malhas'
-              print('GLB_STATIC_PASS=True')
-              print('NODES=',len(doc.get('nodes',[])))
-              print('MESHES=',len(doc.get('meshes',[])))
-              print('MATERIALS=',len(doc.get('materials',[])))
-          PY
+          godot --version
+          test -s project.godot
+          test -s export_presets.cfg
+          grep -q 'platform="Android"' export_presets.cfg
+          mkdir -p build
 
-      - name: Reimportar GLB e gerar BLEND de validação
+      - name: Preparar templates de exportação
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p blender_out
-          cat > /tmp/import_glb.py <<'PY'
-          import bpy, os
-          src=os.path.abspath('assets/station_corridor_kit.glb')
-          out=os.path.abspath('blender_out/station_corridor_kit.blend')
-          bpy.ops.wm.read_factory_settings(use_empty=True)
-          bpy.ops.import_scene.gltf(filepath=src)
-          objects=list(bpy.context.scene.objects)
-          meshes=[o for o in objects if o.type=='MESH']
-          assert objects, 'Importação GLB não criou objetos'
-          assert meshes, 'Importação GLB não criou malhas'
-          bpy.ops.wm.save_as_mainfile(filepath=out)
-          print('BLEND_GENERATION_PASS=True')
-          print('OBJECTS=',len(objects))
-          print('MESHES=',len(meshes))
-          print('MATERIALS=',len(bpy.data.materials))
-          PY
-          blender --background --python /tmp/import_glb.py 2>&1 | tee blender-import.log
-          grep -q 'BLEND_GENERATION_PASS=True' blender-import.log
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          # Download the matching official export templates archive.
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
+            -o "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot-templates"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/godot-templates"
+          TEMPLATE_VERSION="4.5.stable"
+          mkdir -p "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}"
+          cp -a "$RUNNER_TEMP/godot-templates/templates/." \\
+            "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}/"
+          test -d "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}"
 
-      - name: Reabrir e validar BLEND gerado
+      - name: Auditar regras e recursos
         run: |
           set -euo pipefail
-          cat > /tmp/check_blend.py <<'PY'
-          import bpy, os
-          objects=list(bpy.context.scene.objects)
-          meshes=[o for o in objects if o.type=='MESH']
-          assert objects, 'BLEND reabriu sem objetos'
-          assert meshes, 'BLEND reabriu sem malhas'
-          print('BLEND_REOPEN_PASS=True')
-          print('REOPEN_OBJECTS=',len(objects))
-          print('REOPEN_MESHES=',len(meshes))
-          PY
-          blender --background blender_out/station_corridor_kit.blend --python /tmp/check_blend.py 2>&1 | tee blender-reopen.log
-          grep -q 'BLEND_REOPEN_PASS=True' blender-reopen.log
+          if [ -f tests/quality_audit.py ]; then
+            python3 tests/quality_audit.py
+          else
+            echo "AVISO: tests/quality_audit.py não existe; auditoria estática ignorada."
+          fi
 
-      - name: Empacotar projeto completo com Blender e GLB
+      - name: Importar recursos Godot
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p entrega
-          cp blender_out/station_corridor_kit.blend assets/station_corridor_kit.blend
-          cp blender-import.log blender-reopen.log entrega/
-          cp docs/BLENDER_ASSETS.md entrega/
-          zip -qr A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO.zip             project.godot export_presets.cfg README.md VERSION.txt assets scenes scripts audio art docs tests .github
-          unzip -t A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO.zip
+          # Evita que a fonte editável do Blender seja importada pelo Godot.
+          find . -path './.git' -prune -o -type f -name '*.blend' -print
+          if find . -path './.git' -prune -o -type f -name '*.blend' -print -quit | grep -q .; then
+            echo "ERRO: existe um .blend dentro da raiz do projeto Godot."
+            echo "O .blend deve ficar fora da pasta do projeto; manter o .glb em assets/."
+            exit 1
+          fi
+          timeout 8m godot --headless --editor --path . --import --verbose 2>&1 | tee godot-import.log
+          grep -E 'ERROR|Parse Error|SCRIPT ERROR' godot-import.log && exit 1 || true
 
-      - name: Carregar projeto completo e logs
+      - name: Teste de arranque headless
+        run: timeout 2m godot --headless --path . --quit-after 5
+
+      - name: Exportar APK Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          godot --headless --path . --export-debug "Android" "$APK_PATH" 2>&1 | tee godot-export.log
+          test -s "$APK_PATH"
+          file "$APK_PATH"
+          echo "APK_EXPORT_PASS=true"
+
+      - name: Guardar APK e logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO
+          name: A-Ultima-Expedicao-v0.1.107-Android
           path: |
-            A-Ultima-Expedicao-Godot-v0.1.107-BLENDER-INTEGRADO.zip
-            blender-import.log
-            blender-reopen.log
-          if-no-files-found: error
+            build/*.apk
+            godot-import.log
+            godot-export.log
+          if-no-files-found: warn
+          retention-days: 14
+          
