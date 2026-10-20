@@ -4,15 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       zip_path:
-        description: "Caminho do ZIP do projeto no repositório (deixa vazio para procurar automaticamente)"
+        description: "ZIP do projeto na raiz do repositório (vazio = selecionar automaticamente)"
         required: false
         type: string
         default: ""
-  push:
-    paths:
-      - ".github/workflows/blender-from-project-zip.yml"
-      - "assets/**"
-      - "*.zip"
 
 permissions:
   contents: read
@@ -38,26 +33,32 @@ jobs:
           sudo apt-get install -y blender unzip zip
           blender --background --version | tee blender-version.log
 
-      - name: Validar e extrair ZIP do projeto
+      - name: Selecionar, validar e extrair o ZIP do projeto
         env:
           ZIP_INPUT: ${{ inputs.zip_path }}
         run: |
           set -euo pipefail
-
           ZIP_PATH="${ZIP_INPUT:-}"
 
-          # Se não foi indicado um caminho, procurar um ZIP na raiz e em assets/.
-          if [ -z "$ZIP_PATH" ]; then
-            ZIP_PATH="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
-          fi
-          if [ -z "$ZIP_PATH" ]; then
-            ZIP_PATH="$(find assets -maxdepth 3 -type f -iname '*.zip' -print -quit 2>/dev/null || true)"
+          if [ -n "$ZIP_PATH" ]; then
+            [ -f "$ZIP_PATH" ] || { echo "::error::O ZIP indicado não existe: $ZIP_PATH"; exit 1; }
+          else
+            # Preferir explicitamente o ZIP do projeto, nunca o ZIP de resultados.
+            for candidate in \
+              "./A-Ultima-Expedicao-Godot-v0.1.107-KIT-3D-GLB-1.zip" \
+              "./A-Ultima-Expedicao-Godot-v0.1.107-KIT-3D-GLB.zip"; do
+              if [ -f "$candidate" ]; then ZIP_PATH="$candidate"; break; fi
+            done
+            # Fallback: escolher um ZIP de projeto, excluindo pacotes de resultados.
+            if [ -z "$ZIP_PATH" ]; then
+              ZIP_PATH="$(find . -maxdepth 1 -type f -iname '*.zip' \
+                ! -iname '*resultados*' ! -iname '*results*' -print | sort | head -n 1)"
+            fi
           fi
 
           if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
-            echo "::error::Não foi encontrado um ZIP no caminho indicado, na raiz ou em assets/."
-            echo "Guarda e faz commit do ZIP da fonte no repositório, ou define zip_path em Run workflow."
-            find . -maxdepth 4 -type f \( -iname '*.zip' -o -iname '*.glb' \) -print | sort || true
+            echo "::error::Não foi encontrado o ZIP de origem do projeto na raiz."
+            find . -maxdepth 2 -type f -iname '*.zip' -print | sort || true
             exit 1
           fi
 
@@ -72,7 +73,9 @@ jobs:
             GLB_PATH="$(find entrada_zip -type f -iname '*.glb' -print -quit)"
           fi
           if [ -z "$GLB_PATH" ]; then
-            echo "::error::O ZIP não contém qualquer ficheiro GLB para importar."
+            echo "::error::O ZIP de origem não contém nenhum ficheiro .glb."
+            echo "Conteúdo da pasta assets, se existir:"
+            find entrada_zip -type f -ipath '*/assets/*' -print | sort || true
             exit 1
           fi
 
@@ -95,34 +98,32 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           bpy.ops.import_scene.gltf(filepath=source)
 
-          if not bpy.context.scene.objects:
-              raise RuntimeError("A importação não criou objetos Blender.")
+          objects = list(bpy.context.scene.objects)
+          if not objects:
+              raise RuntimeError("A importação do GLB não criou objetos Blender.")
 
           blend_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.blend")
           glb_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.glb")
-
           bpy.ops.wm.save_as_mainfile(filepath=blend_path)
           bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
 
-          print("OBJECT_COUNT=", len(bpy.context.scene.objects))
+          print("OBJECT_COUNT=", len(objects))
           print("BLEND_OUTPUT=", blend_path)
           print("GLB_OUTPUT=", glb_path)
           PY
 
       - name: Converter GLB para projeto Blender editável
-        env:
-          GLB_PATH: ${{ env.GLB_PATH }}
         run: |
           set -euo pipefail
           blender --background --python converter_glb.py 2>&1 | tee blender-build.log
 
-      - name: Validar saídas geradas
+      - name: Validar ficheiros gerados
         run: |
           set -euo pipefail
           test -s saida_blender/A_Ultima_Expedicao_Kit_3D.blend
           test -s saida_blender/A_Ultima_Expedicao_Kit_3D.glb
           ls -lh saida_blender/
-          echo "PASS: os ficheiros existem e não estão vazios; é necessária inspeção visual para validar a qualidade."
+          echo "PASS: os dois ficheiros existem e não estão vazios; a qualidade visual ainda requer inspeção."
 
       - name: Preparar pacote de resultados e logs
         if: always()
@@ -140,11 +141,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: A-Ultima-Expedicao-Blender-Resultados
-          path: |
-            A_Ultima_Expedicao_Blender_Resultados.zip
-            blender-version.log
-            zip-integrity.log
-            zip-files.txt
-            blender-build.log
+          path: A_Ultima_Expedicao_Blender_Resultados.zip
           if-no-files-found: warn
           retention-days: 14
