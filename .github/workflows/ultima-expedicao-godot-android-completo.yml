@@ -10,7 +10,7 @@ on:
         default: ""
   push:
     paths:
-      - ".github/workflows/ultima-expedicao-apk-android.yml"
+      - ".github/workflows/ultima-expedicao-godot-android-completo.yml"
       - "**/*.gd"
       - "**/*.tscn"
       - "**/*.tres"
