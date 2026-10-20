@@ -1,29 +1,33 @@
-name: A Última Expedição — Validar projeto e gerar APK Android
+name: A Última Expedição — APK Android (Godot + modelos 3D)
 
 on:
   workflow_dispatch:
     inputs:
-      zip_path:
-        description: "Caminho do ZIP do projeto na raiz do repositório (vazio = seleção automática)"
+      source_zip:
+        description: "ZIP do projeto Godot (deixar vazio para detetar automaticamente)"
         required: false
         type: string
         default: ""
-      godot_version:
-        description: "Versão estável do Godot 4 (ex.: 4.5.1)"
-        required: true
-        type: string
-        default: "4.5.1"
+  push:
+    paths:
+      - ".github/workflows/ultima-expedicao-apk-android.yml"
+      - "**/*.gd"
+      - "**/*.tscn"
+      - "**/*.tres"
+      - "**/*.godot"
+      - "export_presets.cfg"
+      - "*.zip"
 
 permissions:
   contents: read
 
 concurrency:
   group: ultima-expedicao-apk-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  build-apk:
-    name: Validar projeto Godot e exportar APK
+  build-android:
+    name: Auditar e compilar APK Android
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -31,187 +35,144 @@ jobs:
       - name: Obter repositório
         uses: actions/checkout@v4
 
-      - name: Instalar ferramentas
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unzip zip wget curl openjdk-17-jdk python3
-          java -version
-          unzip -v | head -n 2
+      - name: Preparar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-      - name: Selecionar e extrair ZIP do projeto
+      - name: Preparar SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes Android
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=${ANDROID_HOME}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${ANDROID_HOME}" >> "$GITHUB_ENV"
+
+      - name: Localizar e extrair o projeto
+        id: project
         env:
-          ZIP_INPUT: ${{ inputs.zip_path }}
+          SOURCE_ZIP: ${{ inputs.source_zip }}
+        shell: bash
         run: |
           set -euo pipefail
-          ZIP_PATH="${ZIP_INPUT:-}"
-
-          if [ -n "$ZIP_PATH" ]; then
-            [ -f "$ZIP_PATH" ] || { echo "::error::O ZIP indicado não existe: $ZIP_PATH"; exit 1; }
+          if [ -n "${SOURCE_ZIP}" ]; then
+            ZIP_PATH="${SOURCE_ZIP}"
+            test -f "$ZIP_PATH" || { echo "::error::ZIP indicado não existe: $ZIP_PATH"; exit 1; }
+          elif [ -f "project.godot" ]; then
+            echo "project_dir=$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+            exit 0
           else
-            for candidate in \
-              "./A-Ultima-Expedicao-Godot-v0.1.107-KIT-3D-GLB-1.zip" \
-              "./A-Ultima-Expedicao-Godot-v0.1.107-KIT-3D-GLB.zip"; do
-              if [ -f "$candidate" ]; then ZIP_PATH="$candidate"; break; fi
-            done
+            ZIP_PATH="$(find "$GITHUB_WORKSPACE" -maxdepth 2 -type f -iname '*A*Ultima*Expedicao*.zip' ! -iname '*result*' | head -n 1)"
             if [ -z "$ZIP_PATH" ]; then
-              ZIP_PATH="$(find . -maxdepth 1 -type f -iname '*.zip' \
-                ! -iname '*resultados*' ! -iname '*results*' ! -iname '*blender*' \
-                -print | sort | head -n 1)"
+              ZIP_PATH="$(find "$GITHUB_WORKSPACE" -maxdepth 2 -type f -iname '*.zip' ! -iname '*result*' | head -n 1)"
             fi
+            test -n "$ZIP_PATH" || { echo "::error::Não encontrei project.godot nem ZIP do projeto."; exit 1; }
           fi
-
-          if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
-            echo "::error::Não foi encontrado um ZIP de origem na raiz do repositório."
-            find . -maxdepth 1 -type f -iname '*.zip' -print | sort || true
-            exit 1
-          fi
-
-          echo "ZIP selecionado: $ZIP_PATH"
-          unzip -t "$ZIP_PATH" | tee zip-integrity.log
-          mkdir -p projeto_extraido
-          unzip -q "$ZIP_PATH" -d projeto_extraido
-
-          PROJECT_FILE="$(find projeto_extraido -type f -name project.godot -print -quit)"
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "::error::O ZIP selecionado não contém project.godot. Este ZIP pode conter apenas recursos/modelos 3D, e não o projeto Godot completo."
-            find projeto_extraido -maxdepth 4 -type f | sort | head -n 300 || true
-            exit 1
-          fi
-
+          mkdir -p "$RUNNER_TEMP/game-source"
+          unzip -q "$ZIP_PATH" -d "$RUNNER_TEMP/game-source"
+          PROJECT_FILE="$(find "$RUNNER_TEMP/game-source" -type f -name project.godot -print -quit)"
+          test -n "$PROJECT_FILE" || { echo "::error::O ZIP não contém project.godot; não é um projeto Godot completo."; exit 1; }
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "PROJECT_FILE=$PROJECT_FILE" >> "$GITHUB_ENV"
-          echo "Projeto Godot encontrado: $PROJECT_FILE"
-          find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -n 500 | tee project-files.txt
+          test -f "$PROJECT_DIR/export_presets.cfg" || { echo "::error::Falta export_presets.cfg no projeto."; exit 1; }
+          test -f "$PROJECT_DIR/scenes/Boot.tscn" || { echo "::error::Falta scenes/Boot.tscn."; exit 1; }
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Projeto localizado em: $PROJECT_DIR"
 
-      - name: Instalar Godot e templates de exportação
-        env:
-          GODOT_VERSION: ${{ inputs.godot_version }}
+      - name: Instalar Godot 4.5 e templates de exportação
+        shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GODOT_VERSION}"
-          BASE="https://github.com/godotengine/godot/releases/download/${VERSION}-stable"
-          GODOT_ZIP="Godot_v${VERSION}-stable_linux.x86_64.zip"
-          TEMPLATES_ZIP="Godot_v${VERSION}-stable_export_templates.tpz"
-
-          wget -q --show-progress "${BASE}/${GODOT_ZIP}" -O godot.zip
-          wget -q --show-progress "${BASE}/${TEMPLATES_ZIP}" -O templates.tpz
-
-          mkdir -p "$HOME/godot" "$HOME/.local/share/godot/export_templates/${VERSION}.stable"
-          unzip -q godot.zip -d "$HOME/godot"
-          unzip -q templates.tpz -d templates_extracted
-
-          TEMPLATE_SOURCE="$(find templates_extracted -type d -name templates -print -quit)"
-          if [ -z "$TEMPLATE_SOURCE" ]; then
-            echo "::error::Não foi encontrada a pasta templates no pacote oficial de exportação."
-            find templates_extracted -maxdepth 3 -type f | head -n 100 || true
-            exit 1
-          fi
-          cp -a "$TEMPLATE_SOURCE/." "$HOME/.local/share/godot/export_templates/${VERSION}.stable/"
-
-          GODOT_BIN="$(find "$HOME/godot" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' -print -quit)"
-          if [ -z "$GODOT_BIN" ]; then
-            echo "::error::Não foi encontrado o executável Godot no pacote descarregado."
-            exit 1
-          fi
+          VERSION="4.5"
+          mkdir -p "$RUNNER_TEMP/godot" "$HOME/.local/share/godot/export_templates/${VERSION}.stable"
+          wget -q "https://github.com/godotengine/godot/releases/download/${VERSION}-stable/Godot_v${VERSION}-stable_linux.x86_64.zip" -O "$RUNNER_TEMP/godot/godot.zip"
+          unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
           chmod +x "$GODOT_BIN"
           echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          "$GODOT_BIN" --version | tee godot-version.log
+          wget -q "https://github.com/godotengine/godot/releases/download/${VERSION}-stable/Godot_v${VERSION}-stable_export_templates.tpz" -O "$RUNNER_TEMP/godot/templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot/templates"
+          unzip -oq "$RUNNER_TEMP/godot/templates.tpz" -d "$RUNNER_TEMP/godot/templates"
+          test -d "$RUNNER_TEMP/godot/templates/templates"
+          cp -a "$RUNNER_TEMP/godot/templates/templates/." "$HOME/.local/share/godot/export_templates/${VERSION}.stable/"
+          "$GODOT_BIN" --version
 
-      - name: Validar projeto e descobrir preset Android
+      - name: Configurar definições Android do Godot
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        shell: bash
         run: |
           set -euo pipefail
-          test -s "$PROJECT_FILE"
-          python3 - "$PROJECT_DIR/export_presets.cfg" <<'PY'
-          import configparser
-          import os
-          import sys
+          mkdir -p "$HOME/.config/godot"
+          keytool -genkeypair -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000 2>/dev/null || true
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
 
-          path = sys.argv[1]
-          if not os.path.isfile(path):
-              print("::error::Falta export_presets.cfg. É necessário configurar um preset Android no editor Godot.")
-              raise SystemExit(1)
-
-          parser = configparser.ConfigParser(interpolation=None, strict=False)
-          parser.read(path, encoding="utf-8")
-          found = []
-          for section in parser.sections():
-              if not section.startswith("preset."):
-                  continue
-              name = parser.get(section, "name", fallback="")
-              platform = parser.get(section, "platform", fallback="")
-              if platform.lower() == "android" or "android" in name.lower():
-                  found.append(name)
-
-          if not found:
-              print("::error::Não existe um preset Android em export_presets.cfg.")
-              print("Presets encontrados:")
-              for section in parser.sections():
-                  if section.startswith("preset."):
-                      print(section, parser.get(section, "name", fallback="?"),
-                            parser.get(section, "platform", fallback="?"))
-              raise SystemExit(1)
-
-          # Use the first Android preset and pass its exact name to Godot.
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              f.write("ANDROID_PRESET=" + found[0].replace("\n", "") + "\n")
-          print("ANDROID_PRESET_FOUND=", found[0])
-          PY
-
-      - name: Importar recursos e validar projeto
+      - name: Auditoria estática do projeto
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
         run: |
           set -euo pipefail
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --editor --import 2>&1 | tee godot-import.log
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit 2>&1 | tee godot-validation.log
+          if [ -f tests/quality_audit.py ]; then
+            python3 tests/quality_audit.py
+          else
+            echo "::error::O projeto não inclui tests/quality_audit.py; não vou marcar a auditoria como aprovada."
+            exit 1
+          fi
+
+      - name: Importar recursos e validar arranque Godot
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$GODOT_BIN" --headless --editor --path . --import
+          "$GODOT_BIN" --headless --editor --path . --quit
+          "$GODOT_BIN" --headless --path . --quit-after 5
 
       - name: Exportar APK de depuração
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "$ANDROID_PRESET" "$GITHUB_WORKSPACE/build/A_Ultima_Expedicao-debug.apk" 2>&1 | tee godot-export.log
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          "$GODOT_BIN" --headless --path . --export-debug "Android" "$GITHUB_WORKSPACE/build/A-Ultima-Expedicao-v0.1.107-android.apk"
 
-      - name: Validar APK gerada
+      - name: Verificar APK e calcular SHA-256
+        shell: bash
         run: |
           set -euo pipefail
-          APK="build/A_Ultima_Expedicao-debug.apk"
-          test -s "$APK"
-          python3 - "$APK" <<'PY'
-          import os
-          import sys
-          import zipfile
+          APK="$GITHUB_WORKSPACE/build/A-Ultima-Expedicao-v0.1.107-android.apk"
+          test -s "$APK" || { echo "::error::A APK não foi criada."; exit 1; }
+          unzip -l "$APK" | grep -q 'AndroidManifest.xml' || { echo "::error::A APK não contém AndroidManifest.xml."; exit 1; }
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/build/SHA256SUMS.txt"
+          echo "APK criada e verificação estrutural concluída. Isto não substitui testes num dispositivo Android."
 
-          path = sys.argv[1]
-          if not zipfile.is_zipfile(path):
-              raise SystemExit("APK_FAIL: o ficheiro gerado não é um arquivo ZIP/APK válido.")
-          with zipfile.ZipFile(path) as z:
-              names = set(z.namelist())
-              if "AndroidManifest.xml" not in names:
-                  raise SystemExit("APK_FAIL: AndroidManifest.xml não encontrado.")
-              if not any(n.startswith("lib/") for n in names) and not any(n.endswith(".dex") for n in names):
-                  print("AVISO: não foi encontrada biblioteca nativa nem ficheiro DEX; verificar o conteúdo da APK.")
-              print("APK_ZIP_VALID=True")
-              print("APK_FILE_COUNT=", len(names))
-              print("ANDROID_MANIFEST=True")
-          print("APK_SIZE_BYTES=", os.path.getsize(path))
-          PY
-          sha256sum "$APK" | tee apk-sha256.txt
-          ls -lh "$APK"
-          echo "APK_VALIDATION_PASS=True"
-
-      - name: Publicar APK e logs
+      - name: Guardar APK e logs como artefacto
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-APK-Android
+          name: A-Ultima-Expedicao-Android-${{ github.run_number }}
           path: |
-            build/A_Ultima_Expedicao-debug.apk
-            godot-version.log
-            zip-integrity.log
-            project-files.txt
-            godot-import.log
-            godot-validation.log
-            godot-export.log
-            apk-sha256.txt
+            build/*.apk
+            build/SHA256SUMS.txt
           if-no-files-found: warn
           retention-days: 14
