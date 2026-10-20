@@ -6,7 +6,7 @@ on:
     branches: [main, master]
     paths:
       - '**'
-      - '.github/workflows/build-android.yml'
+      - '.github/workflows/ultima-expedicao-blender-integrado-1.yml'
 
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
 
     env:
       GODOT_VERSION: 4.5-stable
-      APK_PATH: build/A-Ultima-Expedicao-v0.1.107-android.apk
+      APK_PATH: ${{ github.workspace }}/build/A-Ultima-Expedicao-v0.1.107-android.apk
 
     steps:
       - name: Obter projeto
@@ -72,14 +72,30 @@ jobs:
           echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
           "$GODOT_BIN" --version
 
-      - name: Verificar Godot e projeto
+      - name: Extrair ZIP e localizar projeto Godot
+        shell: bash
         run: |
           set -euo pipefail
-          godot --version
-          test -s project.godot
-          test -s export_presets.cfg
-          grep -q 'platform="Android"' export_presets.cfg
-          mkdir -p build
+          ARCHIVE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          if [ -z "$ARCHIVE" ]; then
+            echo "ERRO: não foi encontrado nenhum ZIP do projeto na raiz do repositório."
+            exit 1
+          fi
+          EXTRACT_DIR="$RUNNER_TEMP/ultima-expedicao-source"
+          mkdir -p "$EXTRACT_DIR"
+          unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
+          PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name project.godot -print -quit)"
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERRO: o ZIP não contém project.godot."
+            find "$EXTRACT_DIR" -maxdepth 4 -print | head -n 200
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          test -s "$PROJECT_DIR/export_presets.cfg" || { echo "ERRO: falta export_presets.cfg em $PROJECT_DIR"; exit 1; }
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Projeto Godot localizado em: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR" | head -n 80
+          mkdir -p "$GITHUB_WORKSPACE/build"
 
       - name: Preparar templates de exportação
         shell: bash
@@ -99,12 +115,14 @@ jobs:
           test -d "$HOME/.local/share/godot/export_templates/${TEMPLATE_VERSION}"
 
       - name: Auditar regras e recursos
+        shell: bash
         run: |
           set -euo pipefail
+          cd "$PROJECT_DIR"
           if [ -f tests/quality_audit.py ]; then
             python3 tests/quality_audit.py
           else
-            echo "AVISO: tests/quality_audit.py não existe; auditoria estática ignorada."
+            echo "AVISO: tests/quality_audit.py não existe; auditoria estática não foi executada."
           fi
 
       - name: Importar recursos Godot
@@ -112,24 +130,23 @@ jobs:
         run: |
           set -euo pipefail
           # Evita que a fonte editável do Blender seja importada pelo Godot.
-          find . -path './.git' -prune -o -type f -name '*.blend' -print
-          if find . -path './.git' -prune -o -type f -name '*.blend' -print -quit | grep -q .; then
+          if find "$PROJECT_DIR" -type f -name '*.blend' -print -quit | grep -q .; then
             echo "ERRO: existe um .blend dentro da raiz do projeto Godot."
             echo "O .blend deve ficar fora da pasta do projeto; manter o .glb em assets/."
             exit 1
           fi
-          timeout 8m godot --headless --editor --path . --import --verbose 2>&1 | tee godot-import.log
-          grep -E 'ERROR|Parse Error|SCRIPT ERROR' godot-import.log && exit 1 || true
+          timeout 8m godot --headless --editor --path "$PROJECT_DIR" --import --verbose 2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
+          if grep -E 'ERROR|Parse Error|SCRIPT ERROR' "$GITHUB_WORKSPACE/godot-import.log"; then exit 1; fi
 
       - name: Teste de arranque headless
-        run: timeout 2m godot --headless --path . --quit-after 5
+        run: timeout 2m godot --headless --path "$PROJECT_DIR" --quit-after 5
 
       - name: Exportar APK Android
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build
-          godot --headless --path . --export-debug "Android" "$APK_PATH" 2>&1 | tee godot-export.log
+          godot --headless --path "$PROJECT_DIR" --export-debug "Android" "$APK_PATH" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
           test -s "$APK_PATH"
           file "$APK_PATH"
           echo "APK_EXPORT_PASS=true"
