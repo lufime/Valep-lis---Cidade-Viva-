@@ -26,12 +26,14 @@ jobs:
       - name: Obter repositório
         uses: actions/checkout@v4
 
-      - name: Instalar Blender e ferramentas ZIP
+      - name: Instalar Blender, NumPy e ferramentas ZIP
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y blender unzip zip
+          sudo apt-get install -y blender python3-numpy unzip zip
           blender --background --version | tee blender-version.log
+          echo "Verificar se o NumPy está disponível no Python do Blender..."
+          blender --background --python-expr "import numpy; print('NUMPY_OK', numpy.__version__)" 2>&1 | tee numpy-check.log
 
       - name: Selecionar, validar e extrair o ZIP do projeto
         env:
@@ -43,13 +45,11 @@ jobs:
           if [ -n "$ZIP_PATH" ]; then
             [ -f "$ZIP_PATH" ] || { echo "::error::O ZIP indicado não existe: $ZIP_PATH"; exit 1; }
           else
-            # Preferir explicitamente o ZIP do projeto, nunca o ZIP de resultados.
             for candidate in \
               "./A-Ultima-Expedicao-Godot-v0.1.107-KIT-3D-GLB-1.zip" \
               "./A-Ultima-Expedicao-Godot-v0.1.107-KIT-3D-GLB.zip"; do
               if [ -f "$candidate" ]; then ZIP_PATH="$candidate"; break; fi
             done
-            # Fallback: escolher um ZIP de projeto, excluindo pacotes de resultados.
             if [ -z "$ZIP_PATH" ]; then
               ZIP_PATH="$(find . -maxdepth 1 -type f -iname '*.zip' \
                 ! -iname '*resultados*' ! -iname '*results*' -print | sort | head -n 1)"
@@ -87,7 +87,9 @@ jobs:
           cat > converter_glb.py <<'PY'
           import bpy
           import os
+          import numpy
 
+          print("NUMPY_OK", numpy.__version__)
           source = os.path.abspath(os.environ["GLB_PATH"])
           outdir = os.path.abspath("saida_blender")
           os.makedirs(outdir, exist_ok=True)
@@ -130,6 +132,7 @@ jobs:
         run: |
           mkdir -p entrega
           cp blender-version.log entrega/ 2>/dev/null || true
+          cp numpy-check.log entrega/ 2>/dev/null || true
           cp zip-integrity.log entrega/ 2>/dev/null || true
           cp zip-files.txt entrega/ 2>/dev/null || true
           cp blender-build.log entrega/ 2>/dev/null || true
