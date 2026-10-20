@@ -45,6 +45,8 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           accept-android-sdk-licenses: true
+          # Impede a action de instalar o pacote legado "tools" por omissão.
+          packages: platform-tools
 
       - name: Instalar componentes Android SDK
         shell: bash
