@@ -60,8 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           GODOT_ARCHIVE="$RUNNER_TEMP/godot-4.5-linux.zip"
-          curl --fail --location --retry 3 \\
-            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip" \\
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip" \
             -o "$GODOT_ARCHIVE"
           mkdir -p "$RUNNER_TEMP/godot-bin"
           unzip -q "$GODOT_ARCHIVE" -d "$RUNNER_TEMP/godot-bin"
