@@ -55,11 +55,22 @@ jobs:
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.0"
 
-      - name: Instalar Godot 4.5
-        uses: chickensoft-games/setup-godot@v2
-        with:
-          version: 4.5-stable
-          use-dotnet: false
+      - name: Instalar Godot 4.5 (binário oficial)
+        shell: bash
+        run: |
+          set -euo pipefail
+          GODOT_ARCHIVE="$RUNNER_TEMP/godot-4.5-linux.zip"
+          curl --fail --location --retry 3 \\
+            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip" \\
+            -o "$GODOT_ARCHIVE"
+          mkdir -p "$RUNNER_TEMP/godot-bin"
+          unzip -q "$GODOT_ARCHIVE" -d "$RUNNER_TEMP/godot-bin"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot-bin" -maxdepth 1 -type f -name 'Godot_v4.5-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          ln -sf "$GODOT_BIN" "$RUNNER_TEMP/godot-bin/godot"
+          echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
+          "$GODOT_BIN" --version
 
       - name: Verificar Godot e projeto
         run: |
