@@ -1,40 +1,45 @@
-name: A Última Expedição — Gerar e validar BLEND a partir do ZIP
+name: A Última Expedição — Validar projeto e gerar APK Android
 
 on:
   workflow_dispatch:
     inputs:
       zip_path:
-        description: "ZIP do projeto na raiz do repositório (vazio = selecionar automaticamente)"
+        description: "Caminho do ZIP do projeto na raiz do repositório (vazio = seleção automática)"
         required: false
         type: string
         default: ""
+      godot_version:
+        description: "Versão estável do Godot 4 (ex.: 4.5.1)"
+        required: true
+        type: string
+        default: "4.5.1"
 
 permissions:
   contents: read
 
 concurrency:
-  group: blender-from-project-zip-${{ github.ref }}
+  group: ultima-expedicao-apk-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  generate-blend:
-    name: Gerar e testar ficheiros Blender
+  build-apk:
+    name: Validar projeto Godot e exportar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Obter repositório
         uses: actions/checkout@v4
 
-      - name: Instalar Blender, NumPy e ferramentas ZIP
+      - name: Instalar ferramentas
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y blender python3-numpy unzip zip
-          blender --background --version | tee blender-version.log
-          blender --background --python-expr "import numpy; print('NUMPY_OK', numpy.__version__)" 2>&1 | tee numpy-check.log
+          sudo apt-get install -y unzip zip wget curl openjdk-17-jdk python3
+          java -version
+          unzip -v | head -n 2
 
-      - name: Selecionar, validar e extrair o ZIP do projeto
+      - name: Selecionar e extrair ZIP do projeto
         env:
           ZIP_INPUT: ${{ inputs.zip_path }}
         run: |
@@ -51,179 +56,162 @@ jobs:
             done
             if [ -z "$ZIP_PATH" ]; then
               ZIP_PATH="$(find . -maxdepth 1 -type f -iname '*.zip' \
-                ! -iname '*resultados*' ! -iname '*results*' -print | sort | head -n 1)"
+                ! -iname '*resultados*' ! -iname '*results*' ! -iname '*blender*' \
+                -print | sort | head -n 1)"
             fi
           fi
 
           if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
-            echo "::error::Não foi encontrado o ZIP de origem do projeto na raiz."
-            find . -maxdepth 2 -type f -iname '*.zip' -print | sort || true
+            echo "::error::Não foi encontrado um ZIP de origem na raiz do repositório."
+            find . -maxdepth 1 -type f -iname '*.zip' -print | sort || true
             exit 1
           fi
 
           echo "ZIP selecionado: $ZIP_PATH"
           unzip -t "$ZIP_PATH" | tee zip-integrity.log
-          mkdir -p entrada_zip
-          unzip -q "$ZIP_PATH" -d entrada_zip
-          find entrada_zip -type f -print | sort | tee zip-files.txt
+          mkdir -p projeto_extraido
+          unzip -q "$ZIP_PATH" -d projeto_extraido
 
-          GLB_PATH="$(find entrada_zip -type f -name 'station_corridor_kit.glb' -print -quit)"
-          if [ -z "$GLB_PATH" ]; then
-            GLB_PATH="$(find entrada_zip -type f -iname '*.glb' -print -quit)"
-          fi
-          if [ -z "$GLB_PATH" ]; then
-            echo "::error::O ZIP de origem não contém nenhum ficheiro .glb."
-            find entrada_zip -type f -ipath '*/assets/*' -print | sort || true
+          PROJECT_FILE="$(find projeto_extraido -type f -name project.godot -print -quit)"
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "::error::O ZIP selecionado não contém project.godot. Este ZIP pode conter apenas recursos/modelos 3D, e não o projeto Godot completo."
+            find projeto_extraido -maxdepth 4 -type f | sort | head -n 300 || true
             exit 1
           fi
 
-          echo "GLB_PATH=$GLB_PATH" >> "$GITHUB_ENV"
-          echo "GLB encontrado: $GLB_PATH"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "PROJECT_FILE=$PROJECT_FILE" >> "$GITHUB_ENV"
+          echo "Projeto Godot encontrado: $PROJECT_FILE"
+          find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -n 500 | tee project-files.txt
 
-      - name: Criar script de conversão GLB para BLEND
+      - name: Instalar Godot e templates de exportação
+        env:
+          GODOT_VERSION: ${{ inputs.godot_version }}
         run: |
-          cat > converter_glb.py <<'PY'
-          import bpy
+          set -euo pipefail
+          VERSION="${GODOT_VERSION}"
+          BASE="https://github.com/godotengine/godot/releases/download/${VERSION}-stable"
+          GODOT_ZIP="Godot_v${VERSION}-stable_linux.x86_64.zip"
+          TEMPLATES_ZIP="Godot_v${VERSION}-stable_export_templates.tpz"
+
+          wget -q --show-progress "${BASE}/${GODOT_ZIP}" -O godot.zip
+          wget -q --show-progress "${BASE}/${TEMPLATES_ZIP}" -O templates.tpz
+
+          mkdir -p "$HOME/godot" "$HOME/.local/share/godot/export_templates/${VERSION}.stable"
+          unzip -q godot.zip -d "$HOME/godot"
+          unzip -q templates.tpz -d templates_extracted
+
+          TEMPLATE_SOURCE="$(find templates_extracted -type d -name templates -print -quit)"
+          if [ -z "$TEMPLATE_SOURCE" ]; then
+            echo "::error::Não foi encontrada a pasta templates no pacote oficial de exportação."
+            find templates_extracted -maxdepth 3 -type f | head -n 100 || true
+            exit 1
+          fi
+          cp -a "$TEMPLATE_SOURCE/." "$HOME/.local/share/godot/export_templates/${VERSION}.stable/"
+
+          GODOT_BIN="$(find "$HOME/godot" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' -print -quit)"
+          if [ -z "$GODOT_BIN" ]; then
+            echo "::error::Não foi encontrado o executável Godot no pacote descarregado."
+            exit 1
+          fi
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          "$GODOT_BIN" --version | tee godot-version.log
+
+      - name: Validar projeto e descobrir preset Android
+        run: |
+          set -euo pipefail
+          test -s "$PROJECT_FILE"
+          python3 - "$PROJECT_DIR/export_presets.cfg" <<'PY'
+          import configparser
           import os
-          import numpy
+          import sys
 
-          print("NUMPY_OK", numpy.__version__)
-          source = os.path.abspath(os.environ["GLB_PATH"])
-          outdir = os.path.abspath("saida_blender")
-          os.makedirs(outdir, exist_ok=True)
+          path = sys.argv[1]
+          if not os.path.isfile(path):
+              print("::error::Falta export_presets.cfg. É necessário configurar um preset Android no editor Godot.")
+              raise SystemExit(1)
 
-          if not os.path.isfile(source):
-              raise FileNotFoundError("GLB de origem não encontrado: " + source)
+          parser = configparser.ConfigParser(interpolation=None, strict=False)
+          parser.read(path, encoding="utf-8")
+          found = []
+          for section in parser.sections():
+              if not section.startswith("preset."):
+                  continue
+              name = parser.get(section, "name", fallback="")
+              platform = parser.get(section, "platform", fallback="")
+              if platform.lower() == "android" or "android" in name.lower():
+                  found.append(name)
 
-          bpy.ops.wm.read_factory_settings(use_empty=True)
-          bpy.ops.import_scene.gltf(filepath=source)
+          if not found:
+              print("::error::Não existe um preset Android em export_presets.cfg.")
+              print("Presets encontrados:")
+              for section in parser.sections():
+                  if section.startswith("preset."):
+                      print(section, parser.get(section, "name", fallback="?"),
+                            parser.get(section, "platform", fallback="?"))
+              raise SystemExit(1)
 
-          objects = list(bpy.context.scene.objects)
-          meshes = [obj for obj in objects if obj.type == "MESH"]
-          materials = list(bpy.data.materials)
-          if not objects:
-              raise RuntimeError("A importação do GLB não criou objetos Blender.")
-          if not meshes:
-              raise RuntimeError("A importação do GLB não criou malhas 3D.")
-
-          blend_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.blend")
-          glb_path = os.path.join(outdir, "A_Ultima_Expedicao_Kit_3D.glb")
-          bpy.ops.wm.save_as_mainfile(filepath=blend_path)
-          bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
-
-          print("IMPORT_OBJECT_COUNT=", len(objects))
-          print("IMPORT_MESH_COUNT=", len(meshes))
-          print("IMPORT_MATERIAL_COUNT=", len(materials))
-          print("BLEND_OUTPUT=", blend_path)
-          print("GLB_OUTPUT=", glb_path)
+          # Use the first Android preset and pass its exact name to Godot.
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write("ANDROID_PRESET=" + found[0].replace("\n", "") + "\n")
+          print("ANDROID_PRESET_FOUND=", found[0])
           PY
 
-      - name: Converter GLB para projeto Blender editável
+      - name: Importar recursos e validar projeto
         run: |
           set -euo pipefail
-          blender --background --python converter_glb.py 2>&1 | tee blender-build.log
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --editor --import 2>&1 | tee godot-import.log
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit 2>&1 | tee godot-validation.log
 
-      - name: Criar teste de reabertura do BLEND
+      - name: Exportar APK de depuração
         run: |
-          cat > validar_blend.py <<'PY'
-          import bpy
+          set -euo pipefail
+          mkdir -p build
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "$ANDROID_PRESET" "$GITHUB_WORKSPACE/build/A_Ultima_Expedicao-debug.apk" 2>&1 | tee godot-export.log
+
+      - name: Validar APK gerada
+        run: |
+          set -euo pipefail
+          APK="build/A_Ultima_Expedicao-debug.apk"
+          test -s "$APK"
+          python3 - "$APK" <<'PY'
           import os
+          import sys
+          import zipfile
 
-          blend_path = os.path.abspath("saida_blender/A_Ultima_Expedicao_Kit_3D.blend")
-          validation_copy = os.path.abspath("saida_blender/A_Ultima_Expedicao_Kit_3D_VALIDADO.blend")
-
-          if not os.path.isfile(blend_path) or os.path.getsize(blend_path) == 0:
-              raise RuntimeError("O ficheiro BLEND não existe ou está vazio.")
-
-          # O Blender é iniciado com o ficheiro BLEND como argumento:
-          # este processo só chega aqui depois de o ficheiro ser reaberto.
-          objects = list(bpy.context.scene.objects)
-          meshes = [obj for obj in objects if obj.type == "MESH"]
-          materials = list(bpy.data.materials)
-
-          if not objects:
-              raise RuntimeError("REOPEN_FAIL: o BLEND reabriu sem objetos na cena.")
-          if not meshes:
-              raise RuntimeError("REOPEN_FAIL: o BLEND reabriu sem malhas 3D.")
-
-          # Guardar uma cópia de validação prova que o ficheiro reaberto pode
-          # ser gravado novamente sem substituir o original.
-          bpy.ops.wm.save_as_mainfile(filepath=validation_copy)
-
-          if not os.path.isfile(validation_copy) or os.path.getsize(validation_copy) == 0:
-              raise RuntimeError("SAVE_AGAIN_FAIL: não foi possível guardar a cópia validada.")
-
-          print("REOPEN_PASS=True")
-          print("REOPEN_OBJECT_COUNT=", len(objects))
-          print("REOPEN_MESH_COUNT=", len(meshes))
-          print("REOPEN_MATERIAL_COUNT=", len(materials))
-          print("SAVE_AGAIN_PASS=True")
-          print("VALIDATED_COPY=", validation_copy)
+          path = sys.argv[1]
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("APK_FAIL: o ficheiro gerado não é um arquivo ZIP/APK válido.")
+          with zipfile.ZipFile(path) as z:
+              names = set(z.namelist())
+              if "AndroidManifest.xml" not in names:
+                  raise SystemExit("APK_FAIL: AndroidManifest.xml não encontrado.")
+              if not any(n.startswith("lib/") for n in names) and not any(n.endswith(".dex") for n in names):
+                  print("AVISO: não foi encontrada biblioteca nativa nem ficheiro DEX; verificar o conteúdo da APK.")
+              print("APK_ZIP_VALID=True")
+              print("APK_FILE_COUNT=", len(names))
+              print("ANDROID_MANIFEST=True")
+          print("APK_SIZE_BYTES=", os.path.getsize(path))
           PY
+          sha256sum "$APK" | tee apk-sha256.txt
+          ls -lh "$APK"
+          echo "APK_VALIDATION_PASS=True"
 
-      - name: Reabrir, verificar e guardar novamente o BLEND
-        run: |
-          set -euo pipefail
-          blender --background saida_blender/A_Ultima_Expedicao_Kit_3D.blend --python validar_blend.py 2>&1 | tee blender-reopen-validation.log
-          grep -q 'REOPEN_PASS=True' blender-reopen-validation.log
-          grep -q 'SAVE_AGAIN_PASS=True' blender-reopen-validation.log
-
-      - name: Validar ficheiros e estrutura do GLB
-        run: |
-          set -euo pipefail
-          test -s saida_blender/A_Ultima_Expedicao_Kit_3D.blend
-          test -s saida_blender/A_Ultima_Expedicao_Kit_3D.glb
-          test -s saida_blender/A_Ultima_Expedicao_Kit_3D_VALIDADO.blend
-          python3 - <<'PY' | tee glb-validation.log
-          import json, struct
-          path = "saida_blender/A_Ultima_Expedicao_Kit_3D.glb"
-          with open(path, "rb") as f:
-              header = f.read(12)
-              if len(header) != 12:
-                  raise SystemExit("GLB_FAIL: cabeçalho incompleto")
-              magic, version, declared_length = struct.unpack("<4sII", header)
-              if magic != b"glTF":
-                  raise SystemExit("GLB_FAIL: assinatura glTF inválida")
-              if version != 2:
-                  raise SystemExit(f"GLB_FAIL: versão inesperada {version}")
-              if declared_length != __import__("os").path.getsize(path):
-                  raise SystemExit("GLB_FAIL: tamanho declarado não corresponde ao tamanho real")
-              chunk_header = f.read(8)
-              if len(chunk_header) != 8:
-                  raise SystemExit("GLB_FAIL: chunk JSON em falta")
-              chunk_length, chunk_type = struct.unpack("<I4s", chunk_header)
-              if chunk_type != b"JSON":
-                  raise SystemExit("GLB_FAIL: primeiro chunk não é JSON")
-              raw_json = f.read(chunk_length)
-              doc = json.loads(raw_json.decode("utf-8"))
-              print("GLB_VALIDATION_PASS=True")
-              print("GLB_VERSION=", version)
-              print("GLB_NODE_COUNT=", len(doc.get("nodes", [])))
-              print("GLB_MESH_COUNT=", len(doc.get("meshes", [])))
-              print("GLB_MATERIAL_COUNT=", len(doc.get("materials", [])))
-          PY
-          ls -lh saida_blender/
-          echo "PASS: conversão, reabertura do BLEND, gravação de cópia e estrutura básica do GLB verificadas."
-
-      - name: Preparar pacote de resultados e logs
-        if: always()
-        run: |
-          mkdir -p entrega
-          cp blender-version.log entrega/ 2>/dev/null || true
-          cp numpy-check.log entrega/ 2>/dev/null || true
-          cp zip-integrity.log entrega/ 2>/dev/null || true
-          cp zip-files.txt entrega/ 2>/dev/null || true
-          cp blender-build.log entrega/ 2>/dev/null || true
-          cp blender-reopen-validation.log entrega/ 2>/dev/null || true
-          cp glb-validation.log entrega/ 2>/dev/null || true
-          cp -r saida_blender entrega/ 2>/dev/null || true
-          zip -qr A_Ultima_Expedicao_Blender_Resultados.zip entrega
-
-      - name: Publicar resultados e logs
+      - name: Publicar APK e logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-Blender-Resultados
-          path: A_Ultima_Expedicao_Blender_Resultados.zip
+          name: A-Ultima-Expedicao-APK-Android
+          path: |
+            build/A_Ultima_Expedicao-debug.apk
+            godot-version.log
+            zip-integrity.log
+            project-files.txt
+            godot-import.log
+            godot-validation.log
+            godot-export.log
+            apk-sha256.txt
           if-no-files-found: warn
           retention-days: 14
