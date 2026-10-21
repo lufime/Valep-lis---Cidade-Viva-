@@ -24,7 +24,7 @@ jobs:
     env:
       GODOT_VERSION: 4.5-stable
       APK_NAME: A-Ultima-Expedicao-v0.1.124-android.apk
-      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.124-CODIGO-SECRETO-IMPLEMENTADO-3.zip
+      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.124-AUDITORIA-E-VERSAO-CORRIGIDAS.zip
 
     steps:
       - name: Obter repositório
@@ -127,9 +127,22 @@ jobs:
             exit 1
           fi
 
+          # Confirma a versão declarada nos scripts antes de importar/exportar.
+          if [ -f "$PROJECT_DIR/scripts/VERSION.txt" ]; then
+            SCRIPT_VERSION="$(tr -d '\r\n ' < "$PROJECT_DIR/scripts/VERSION.txt")"
+            if [ "$SCRIPT_VERSION" != "0.1.124" ]; then
+              echo "::error::Versão dos scripts inesperada: '$SCRIPT_VERSION' (esperada: 0.1.124)."
+              exit 1
+            fi
+          else
+            echo "::error::Falta scripts/VERSION.txt; não é possível confirmar a versão do projeto."
+            exit 1
+          fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           mkdir -p "$GITHUB_WORKSPACE/build"
           echo "Projeto selecionado: $PROJECT_DIR"
+          echo "Versão dos scripts: $SCRIPT_VERSION"
           echo "ZIP selecionado: $ARCHIVE"
 
       - name: Auditar recursos 3D e separar fontes Blender
