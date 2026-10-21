@@ -94,10 +94,18 @@ jobs:
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
 
-          mapfile -t PROJECT_FILES < <(find "$EXTRACT_DIR" -type f -name project.godot -print)
+          # O ZIP inclui também uma cópia-fonte em blender_improve_src/.
+          # Seleciona apenas o projeto principal, excluindo essa cópia.
+          mapfile -t PROJECT_FILES < <(
+            find "$EXTRACT_DIR" -type f -name project.godot \\
+              ! -path '*/blender_improve_src/*' \\
+              ! -path '*/.git/*' -print
+          )
           if [ "${#PROJECT_FILES[@]}" -ne 1 ]; then
-            echo "::error::Esperava encontrar exatamente um project.godot; encontrei ${#PROJECT_FILES[@]}."
-            printf '%s\n' "${PROJECT_FILES[@]:-}"
+            echo "::error::Esperava exatamente um project.godot principal (excluindo blender_improve_src); encontrei ${#PROJECT_FILES[@]}."
+            printf '%s\\n' "${PROJECT_FILES[@]:-}"
+            echo "Estrutura encontrada:"
+            find "$EXTRACT_DIR" -type f -name project.godot -print | sort
             exit 1
           fi
 
