@@ -23,8 +23,8 @@ jobs:
 
     env:
       GODOT_VERSION: 4.5-stable
-      APK_NAME: A-Ultima-Expedicao-v0.1.114-android.apk
-      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.114-Pacote-Blender-Exterior-Instalacoes-Criatura-Jogadores.zip
+      APK_NAME: A-Ultima-Expedicao-v0.1.115-android.apk
+      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.115-Blender-Melhorado.zip
 
     steps:
       - name: Obter repositório
@@ -212,7 +212,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-v0.1.114-Android
+          name: A-Ultima-Expedicao-v0.1.115-Android
           path: |
             build/*.apk
             godot-import.log
