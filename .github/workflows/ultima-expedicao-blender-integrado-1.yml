@@ -24,7 +24,7 @@ jobs:
     env:
       GODOT_VERSION: 4.5-stable
       APK_NAME: A-Ultima-Expedicao-v0.1.115-android.apk
-      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.115-Blender-Melhorado-ESTRUTURA-CORRIGIDA.zip
+      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.115-BLENDER-DETALHES-V0.1.116.zip
 
     steps:
       - name: Obter repositório
