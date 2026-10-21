@@ -19,7 +19,7 @@ jobs:
   build-apk:
     name: Importar, validar e exportar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     env:
       GODOT_VERSION: 4.5-stable
@@ -121,7 +121,7 @@ jobs:
           echo "Projeto selecionado: $PROJECT_DIR"
           echo "ZIP selecionado: $ARCHIVE"
 
-      - name: Auditar recursos 3D necessários
+      - name: Auditar recursos 3D e separar fontes Blender
         shell: bash
         run: |
           set -euo pipefail
@@ -130,12 +130,22 @@ jobs:
           echo "Modelos GLB encontrados:"
           find . -type f -iname '*.glb' -print | sort || true
 
-          # Os .blend são fontes editáveis do Blender. Não são executados pelo Godot
-          # e não devem, por si só, bloquear a exportação Android.
-          BLEND_COUNT="$(find . -type f -iname '*.blend' | wc -l)"
-          GLB_COUNT="$(find . -type f -iname '*.glb' | wc -l)"
-          echo "Ficheiros Blender (.blend): $BLEND_COUNT"
-          echo "Modelos exportados (.glb): $GLB_COUNT"
+          # O Godot deve importar os GLB, não tentar importar ficheiros-fonte .blend.
+          # Preserva os .blend no diretório temporário do runner, fora da raiz do projeto.
+          BLENDER_SOURCE_DIR="$RUNNER_TEMP/blender-source"
+          mkdir -p "$BLENDER_SOURCE_DIR"
+          BLEND_COUNT=0
+          while IFS= read -r -d '' BLEND_FILE; do
+            RELATIVE_PATH="${BLEND_FILE#"$PROJECT_DIR"/}"
+            DESTINATION="$BLENDER_SOURCE_DIR/$RELATIVE_PATH"
+            mkdir -p "$(dirname "$DESTINATION")"
+            mv "$BLEND_FILE" "$DESTINATION"
+            BLEND_COUNT=$((BLEND_COUNT + 1))
+          done < <(find "$PROJECT_DIR" -type f -iname '*.blend' -print0)
+
+          GLB_COUNT="$(find "$PROJECT_DIR" -type f -iname '*.glb' | wc -l)"
+          echo "Fontes Blender guardadas fora do projeto Godot: $BLEND_COUNT"
+          echo "Modelos exportados GLB disponíveis ao Godot: $GLB_COUNT"
 
           if [ "$GLB_COUNT" -eq 0 ]; then
             echo "::error::Não existem modelos .glb no projeto; os modelos 3D exportados são necessários para o jogo."
@@ -169,7 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           set -o pipefail
-          timeout 10m godot --headless --editor --path "$PROJECT_DIR" --import --verbose \
+          timeout 20m godot --headless --editor --path "$PROJECT_DIR" --import \
             2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
 
           if grep -E '(^|[[:space:]])(SCRIPT ERROR|Parse Error|Failed to load script|ERROR:)' \
