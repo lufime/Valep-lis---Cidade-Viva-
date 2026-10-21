@@ -94,22 +94,17 @@ jobs:
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
 
-          # O ZIP inclui também uma cópia-fonte em blender_improve_src/.
-          # Seleciona apenas o projeto principal, excluindo essa cópia.
-          mapfile -t PROJECT_FILES < <(
-            find "$EXTRACT_DIR" -type f -name project.godot \\
-              ! -path '*/blender_improve_src/*' \\
-              ! -path '*/.git/*' -print
-          )
-          if [ "${#PROJECT_FILES[@]}" -ne 1 ]; then
-            echo "::error::Esperava exatamente um project.godot principal (excluindo blender_improve_src); encontrei ${#PROJECT_FILES[@]}."
-            printf '%s\\n' "${PROJECT_FILES[@]:-}"
+          # Seleciona o projeto principal pelo caminho exato; exclui a cópia blender_improve_src.
+          PRIMARY_PROJECT="$EXTRACT_DIR/A-Ultima-Expedicao-Godot-v0.1.115/project.godot"
+          if [ ! -f "$PRIMARY_PROJECT" ]; then
+            echo "::error::Projeto principal não encontrado em: $PRIMARY_PROJECT"
             echo "Estrutura encontrada:"
             find "$EXTRACT_DIR" -type f -name project.godot -print | sort
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "${PROJECT_FILES[0]}")"
+          PROJECT_FILES=("$PRIMARY_PROJECT")
+          PROJECT_DIR="$(dirname "$PRIMARY_PROJECT")"
           test -s "$PROJECT_DIR/export_presets.cfg" || {
             echo "::error::Falta export_presets.cfg em $PROJECT_DIR"
             exit 1
