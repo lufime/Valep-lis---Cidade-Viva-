@@ -23,8 +23,8 @@ jobs:
 
     env:
       GODOT_VERSION: 4.5-stable
-      APK_NAME: A-Ultima-Expedicao-v0.1.115-android.apk
-      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.115-BLENDER-DETALHES-V0.1.116.zip
+      APK_NAME: A-Ultima-Expedicao-v0.1.124-android.apk
+      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.124-CODIGO-SECRETO-IMPLEMENTADO-3.zip
 
     steps:
       - name: Obter repositório
@@ -94,16 +94,24 @@ jobs:
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
 
-          # Seleciona o projeto principal pelo caminho exato; exclui a cópia blender_improve_src.
-          PRIMARY_PROJECT="$EXTRACT_DIR/A-Ultima-Expedicao-Godot-v0.1.115/project.godot"
-          if [ ! -f "$PRIMARY_PROJECT" ]; then
-            echo "::error::Projeto principal não encontrado em: $PRIMARY_PROJECT"
+          # Descobre project.godot dentro do ZIP sem assumir que a pasta mantém o nome v0.1.115.
+          # Exclui cópias de origem/backup para evitar selecionar um projeto duplicado.
+          mapfile -t PROJECT_CANDIDATES < <(find "$EXTRACT_DIR" -type f -name project.godot \
+            ! -path '*/blender_improve_src/*' \
+            ! -path '*/.godot/*' | sort)
+          if [ "${#PROJECT_CANDIDATES[@]}" -eq 0 ]; then
+            echo "::error::Não foi encontrado project.godot no ZIP v0.1.124."
             echo "Estrutura encontrada:"
-            find "$EXTRACT_DIR" -type f -name project.godot -print | sort
+            find "$EXTRACT_DIR" -maxdepth 5 -type f | sort | head -300
+            exit 1
+          fi
+          if [ "${#PROJECT_CANDIDATES[@]}" -gt 1 ]; then
+            echo "::error::Foram encontrados vários projetos Godot possíveis; seleção ambígua."
+            printf '%s\n' "${PROJECT_CANDIDATES[@]}"
             exit 1
           fi
 
-          PROJECT_FILES=("$PRIMARY_PROJECT")
+          PRIMARY_PROJECT="${PROJECT_CANDIDATES[0]}"
           PROJECT_DIR="$(dirname "$PRIMARY_PROJECT")"
           test -s "$PROJECT_DIR/export_presets.cfg" || {
             echo "::error::Falta export_presets.cfg em $PROJECT_DIR"
@@ -215,7 +223,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-v0.1.115-Android
+          name: A-Ultima-Expedicao-v0.1.124-Android
           path: |
             build/*.apk
             godot-import.log
