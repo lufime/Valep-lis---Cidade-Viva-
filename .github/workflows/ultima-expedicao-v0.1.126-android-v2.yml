@@ -101,8 +101,8 @@ jobs:
               exit 1
             fi
             echo "A instalar Blender e NumPy com limites de tempo..."
-            sudo timeout 180s apt-get update
-            sudo timeout 180s apt-get install -y blender python3-numpy
+            sudo timeout 600s apt-get update
+            sudo timeout 600s apt-get install -y blender python3-numpy
             echo "A exportar GLB; limite de 120 segundos..."
             timeout 120s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background "$blend" --python-expr "import bpy; import numpy; print('NUMPY_VERSION=' + numpy.__version__); bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
           fi
@@ -113,8 +113,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo timeout 180s apt-get update
-          sudo timeout 180s apt-get install -y blender
+          # Blender já foi instalado no passo de geração do GLB; reutilizar a instalação.
+          command -v blender
           cd "$PROJECT_DIR"
           mkdir -p "$GITHUB_WORKSPACE/blender-logs"
           for script in blender/build_polar_station_exterior.py blender/build_station_interior.py blender/build_creature_entity.py blender/build_player_expedition_survivor.py blender/build_rigged_animated_players.py; do
@@ -134,6 +134,18 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Empacotar projeto atualizado com modelos Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          project_parent="$(dirname "$PROJECT_DIR")"
+          project_name="$(basename "$PROJECT_DIR")"
+          (cd "$project_parent" && zip -qr "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip" "$project_name" -x '*/.godot/*' '*/build/*')
+          test -s "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
+          unzip -tq "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
+          sha256sum "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
 
       # O GLB fica no projeto; o .blend original é guardado no artefacto de diagnóstico.
       - name: Separar fontes Blender antes da importação Godot
@@ -242,6 +254,7 @@ jobs:
           name: A-Ultima-Expedicao-v0.1.126-Android-Diagnostico
           path: |
             project/**/build/A-Ultima-Expedicao-v0.1.126-android.apk
+            dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip
             blender-source/**
             godot-import.log
             godot-startup.log
