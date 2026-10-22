@@ -109,6 +109,24 @@ jobs:
           test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
           echo "BLENDER_GLB_GENERATION_PASS=True"
 
+      - name: Executar scripts Blender e verificar modelos 3D
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo timeout 180s apt-get update
+          sudo timeout 180s apt-get install -y blender
+          cd "$PROJECT_DIR"
+          mkdir -p "$GITHUB_WORKSPACE/blender-logs"
+          for script in blender/build_polar_station_exterior.py blender/build_station_interior.py blender/build_creature_entity.py blender/build_player_expedition_survivor.py blender/build_rigged_animated_players.py; do
+            test -s "$script"
+            log="$GITHUB_WORKSPACE/blender-logs/$(basename "$script" .py).log"
+            timeout 180s blender --background --factory-startup --python "$script" >"$log" 2>&1 || { cat "$log"; exit 1; }
+          done
+          for model in polar_station_exterior station_interior_modular entity_creature player_expedition_survivor player_expedition_rigged; do
+            test -s "assets/$model.glb"
+            test -s "assets/$model.blend"
+          done
+
       # O GLB fica no projeto; o .blend original é guardado no artefacto de diagnóstico.
       - name: Separar fontes Blender antes da importação Godot
         shell: bash
@@ -220,5 +238,6 @@ jobs:
             godot-import.log
             godot-startup.log
             godot-export.log
+            blender-logs/**
           if-no-files-found: warn
           retention-days: 14
