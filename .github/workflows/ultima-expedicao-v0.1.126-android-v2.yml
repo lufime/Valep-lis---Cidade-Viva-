@@ -41,8 +41,11 @@ jobs:
           fi
           mkdir -p project
           unzip -q "$zipfile" -d project
-          root="$(find project -mindepth 1 -maxdepth 1 -type d -print -quit)"
-          test -n "$root"
+          root="$(find project -type f -name project.godot -printf '%h\n' -quit)"
+          if [ -z "$root" ]; then
+            echo "::error::O ZIP não contém project.godot."
+            exit 1
+          fi
           echo "PROJECT_DIR=$GITHUB_WORKSPACE/$root" >> "$GITHUB_ENV"
           echo "Projeto selecionado: $root"
           test -s "$root/project.godot"
@@ -51,12 +54,11 @@ jobs:
           test "$(tr -d '\r\n' < "$root/VERSION.txt")" = "0.1.126"
           test "$(tr -d '\r\n' < "$root/scripts/VERSION.txt")" = "0.1.126"
 
-      - name: Validar preset Android sem o erro de expressão regular
+      - name: Validar preset Android
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          test -s export_presets.cfg
           grep -Eq '^\[preset\.[0-9]+\]' export_presets.cfg
           grep -Eq '^platform="Android"$' export_presets.cfg
           grep -Eq '^name="Android"$' export_presets.cfg
@@ -70,6 +72,17 @@ jobs:
           cd "$PROJECT_DIR"
           python tests/quality_audit.py
 
+      # O projeto contém assets/station_corridor_kit.blend. Godot depende do
+      # executável Blender para importar ficheiros .blend em Linux.
+      - name: Instalar Blender para importar recursos .blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y blender
+          command -v blender
+          blender --version | head -n 2
+
       - name: Instalar Godot 4.5
         uses: chickensoft-games/setup-godot@v2
         with:
@@ -77,56 +90,88 @@ jobs:
           use-dotnet: false
           include-templates: true
 
-      - name: Confirmar versão do Godot
+      - name: Confirmar ferramentas e versões
         shell: bash
         run: |
           set -euo pipefail
           godot --version
+          blender --version | head -n 2
 
       - name: Importar recursos no Godot
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd "$PROJECT_DIR"
-          godot --headless --editor --path . --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
+          log="$GITHUB_WORKSPACE/godot-import.log"
+          printf 'IMPORT_START_UTC=%s\n' "$(date -u +%FT%TZ)" | tee "$log"
+          # Importação inicial única. O pipefail garante que um erro do Godot
+          # não fica escondido pelo sucesso do tee.
+          godot --headless --editor --path "$PROJECT_DIR" --quit 2>&1 | tee -a "$log"
+          rc=${PIPESTATUS[0]}
+          printf 'IMPORT_EXIT_CODE=%s\nIMPORT_END_UTC=%s\n' "$rc" "$(date -u +%FT%TZ)" | tee -a "$log"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::A importação do Godot falhou com código $rc. Consultar godot-import.log."
+            exit "$rc"
+          fi
+          # Não declara sucesso só porque o processo terminou: verifica que
+          # o projeto gerou o cache de importação para os recursos de origem.
+          if [ ! -d "$PROJECT_DIR/.godot/imported" ]; then
+            echo "::error::Godot terminou sem criar .godot/imported; importação não comprovada."
+            exit 1
+          fi
+          echo "GODOT_IMPORT_PROCESS_PASS=True" | tee -a "$log"
 
       - name: Teste de arranque headless
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd "$PROJECT_DIR"
-          godot --headless --path . --quit-after 5 2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
+          log="$GITHUB_WORKSPACE/godot-startup.log"
+          godot --headless --path "$PROJECT_DIR" --quit-after 5 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          echo "STARTUP_EXIT_CODE=$rc" | tee -a "$log"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::O teste de arranque headless falhou."
+            exit "$rc"
+          fi
 
       - name: Preparar Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Verificar configuração de exportação
+      - name: Preparar pasta de exportação
         shell: bash
         run: |
           set -euo pipefail
-          cd "$PROJECT_DIR"
-          mkdir -p build
-          godot --headless --path . --editor --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-export-check.log"
+          mkdir -p "$PROJECT_DIR/build"
 
       - name: Exportar APK Android
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd "$PROJECT_DIR"
-          godot --headless --path . --export-debug "Android" "build/$APK_NAME" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
-          test -s "build/$APK_NAME"
-          echo "APK_EXPORT_PASS=True"
+          log="$GITHUB_WORKSPACE/godot-export.log"
+          godot --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/$APK_NAME" 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          echo "EXPORT_EXIT_CODE=$rc" | tee -a "$log"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::A exportação Android falhou."
+            exit "$rc"
+          fi
+          if [ ! -s "$PROJECT_DIR/build/$APK_NAME" ]; then
+            echo "::error::O Godot terminou sem gerar uma APK não vazia."
+            exit 1
+          fi
+          echo "APK_EXPORT_PASS=True" | tee -a "$log"
 
-      - name: Publicar APK e logs de auditoria
+      - name: Publicar APK, logs e relatório mesmo em caso de falha
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-v0.1.126-Android
+          name: A-Ultima-Expedicao-v0.1.126-Android-Diagnostico
           path: |
             project/**/build/A-Ultima-Expedicao-v0.1.126-android.apk
             godot-import.log
             godot-startup.log
-            godot-export-check.log
             godot-export.log
           if-no-files-found: warn
           retention-days: 14
