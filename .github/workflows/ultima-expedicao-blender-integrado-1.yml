@@ -17,13 +17,14 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Importar, validar e exportar APK
+    name: Procurar ZIP, validar, importar e exportar APK
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     env:
       GODOT_VERSION: 4.5-stable
-      APK_NAME: A-Ultima-Expedicao-v0.1.124-android.apk
+      PROJECT_VERSION: 0.1.126
+      APK_NAME: A-Ultima-Expedicao-v0.1.126-android.apk
 
     steps:
       - name: Obter repositório
@@ -42,13 +43,11 @@ jobs:
           ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "::error::sdkmanager não encontrado em $ANDROID_HOME/cmdline-tools"
             exit 1
           fi
-
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
           test -x "$ANDROID_HOME/platform-tools/adb"
@@ -67,7 +66,7 @@ jobs:
           unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/godot-bin"
           GODOT_BIN="$(find "$RUNNER_TEMP/godot-bin" -maxdepth 1 -type f -name 'Godot_v4.5-stable_linux.x86_64' -print -quit)"
           if [ -z "$GODOT_BIN" ]; then
-            echo "::error::Não foi encontrado o executável Godot esperado no arquivo oficial."
+            echo "::error::Executável Godot 4.5 não encontrado no arquivo oficial."
             find "$RUNNER_TEMP/godot-bin" -maxdepth 2 -type f -print
             exit 1
           fi
@@ -80,20 +79,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "A procurar ZIPs do projeto A Última Expedição v0.1.124..."
-          echo "ZIPs encontrados na raiz do repositório:"
+          echo "A procurar ZIPs v${PROJECT_VERSION} na raiz:"
           find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort || true
 
-          # Prioridade: ZIP da versão 0.1.124 com a correção do ciclo.
-          # Aceita sufixos automáticos do GitHub, por exemplo CICLO-CORRIGIDO-1.zip.
-          mapfile -t ZIP_CANDIDATES < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f \
-            -iname 'A-Ultima-Expedicao-Godot-v0.1.124*.zip' \
-            ! -iname '*logs*' | sort)
-
+          mapfile -t ZIP_CANDIDATES < <(
+            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f \
+              -iname "A-Ultima-Expedicao-Godot-v${PROJECT_VERSION}*.zip" \
+              ! -iname '*logs*' | sort
+          )
           if [ "${#ZIP_CANDIDATES[@]}" -eq 0 ]; then
-            echo "::error::Não foi encontrado nenhum ZIP A-Ultima-Expedicao-Godot-v0.1.124*.zip na raiz."
-            echo "Coloca o ZIP completo do projeto na raiz do repositório e volta a executar o workflow."
+            echo "::error::Não foi encontrado ZIP v${PROJECT_VERSION} na raiz do repositório."
             exit 1
           fi
 
@@ -107,10 +102,9 @@ jobs:
           if [ "${#CYCLE_CANDIDATES[@]}" -eq 1 ]; then
             ARCHIVE="${CYCLE_CANDIDATES[0]}"
           elif [ "${#CYCLE_CANDIDATES[@]}" -gt 1 ]; then
-            # Se houver cópias numeradas do mesmo ZIP, prefere a que não tem sufixo numérico.
             PREFERRED=""
             for candidate in "${CYCLE_CANDIDATES[@]}"; do
-              if [[ "$(basename "$candidate")" == "A-Ultima-Expedicao-Godot-v0.1.124-CICLO-CORRIGIDO.zip" ]]; then
+              if [[ "$(basename "$candidate")" == "A-Ultima-Expedicao-Godot-v${PROJECT_VERSION}-CICLO-CORRIGIDO.zip" ]]; then
                 PREFERRED="$candidate"
                 break
               fi
@@ -118,124 +112,88 @@ jobs:
             if [ -n "$PREFERRED" ]; then
               ARCHIVE="$PREFERRED"
             else
-              echo "::error::Encontrados vários ZIPs CICLO-CORRIGIDO e não foi possível escolher sem ambiguidade:"
+              echo "::error::Há vários ZIPs CICLO-CORRIGIDO; não é seguro escolher automaticamente:"
               printf '%s\n' "${CYCLE_CANDIDATES[@]}"
               exit 1
             fi
           elif [ "${#ZIP_CANDIDATES[@]}" -eq 1 ]; then
             ARCHIVE="${ZIP_CANDIDATES[0]}"
-            echo "::warning::Não foi encontrado um ZIP com CICLO-CORRIGIDO no nome; será validado o único ZIP da versão 0.1.124."
+            echo "::warning::Não existe nome CICLO-CORRIGIDO; será validado o único ZIP v${PROJECT_VERSION}."
           else
-            echo "::error::Foram encontrados vários ZIPs v0.1.124, mas nenhum identifica claramente a correção do ciclo:"
+            echo "::error::Há vários ZIPs v${PROJECT_VERSION}, sem indicação inequívoca do ZIP do ciclo:"
             printf '%s\n' "${ZIP_CANDIDATES[@]}"
-            echo "Mantém apenas o ZIP pretendido ou identifica-o com CICLO-CORRIGIDO no nome."
             exit 1
           fi
 
           test -s "$ARCHIVE"
-          echo "ZIP selecionado automaticamente: $(basename "$ARCHIVE")"
-          echo "PROJECT_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-
+          echo "ZIP selecionado: $(basename "$ARCHIVE")"
           EXTRACT_DIR="$RUNNER_TEMP/ultima-expedicao-source"
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
 
-          # Descobre project.godot dentro do ZIP sem assumir que a pasta mantém o nome v0.1.115.
-          # Exclui cópias de origem/backup para evitar selecionar um projeto duplicado.
-          mapfile -t PROJECT_CANDIDATES < <(find "$EXTRACT_DIR" -type f -name project.godot \
-            ! -path '*/blender_improve_src/*' \
-            ! -path '*/.godot/*' | sort)
-          if [ "${#PROJECT_CANDIDATES[@]}" -eq 0 ]; then
-            echo "::error::Não foi encontrado project.godot no ZIP v0.1.124."
-            echo "Estrutura encontrada:"
-            find "$EXTRACT_DIR" -maxdepth 5 -type f | sort | head -300
-            exit 1
-          fi
-          if [ "${#PROJECT_CANDIDATES[@]}" -gt 1 ]; then
-            echo "::error::Foram encontrados vários projetos Godot possíveis; seleção ambígua."
+          mapfile -t PROJECT_CANDIDATES < <(
+            find "$EXTRACT_DIR" -type f -name project.godot \
+              ! -path '*/blender_improve_src/*' \
+              ! -path '*/.godot/*' | sort
+          )
+          if [ "${#PROJECT_CANDIDATES[@]}" -ne 1 ]; then
+            echo "::error::Esperado exatamente um project.godot; encontrados ${#PROJECT_CANDIDATES[@]}."
             printf '%s\n' "${PROJECT_CANDIDATES[@]}"
             exit 1
           fi
 
-          PRIMARY_PROJECT="${PROJECT_CANDIDATES[0]}"
-          PROJECT_DIR="$(dirname "$PRIMARY_PROJECT")"
+          PROJECT_DIR="$(dirname "${PROJECT_CANDIDATES[0]}")"
           test -s "$PROJECT_DIR/export_presets.cfg" || {
-            echo "::error::Falta export_presets.cfg em $PROJECT_DIR"
+            echo "::error::Falta export_presets.cfg"
             exit 1
           }
-
-          if ! grep -Eq '^\[preset\.[0-9]+\]' "$PROJECT_DIR/export_presets.cfg"; then
-            echo "::error::export_presets.cfg não contém qualquer preset exportável."
+          if ! grep -Eq '^\\[preset\\.[0-9]+\\]' "$PROJECT_DIR/export_presets.cfg"; then
+            echo "::error::export_presets.cfg não contém presets exportáveis."
             exit 1
           fi
-          if ! grep -E '^\[preset\.[0-9]+\]' "$PROJECT_DIR/export_presets.cfg" -A 8 | grep -qi 'Android'; then
+          if ! grep -E '^\\[preset\\.[0-9]+\\]' "$PROJECT_DIR/export_presets.cfg" -A 8 | grep -qi 'Android'; then
             echo "::error::Não foi encontrado um preset Android em export_presets.cfg."
             exit 1
           fi
 
-          # Confirma a versão declarada nos scripts antes de importar/exportar.
-          if [ -f "$PROJECT_DIR/scripts/VERSION.txt" ]; then
-            SCRIPT_VERSION="$(tr -d '\r\n ' < "$PROJECT_DIR/scripts/VERSION.txt")"
-            if [ "$SCRIPT_VERSION" != "0.1.124" ]; then
-              echo "::error::Versão dos scripts inesperada: '$SCRIPT_VERSION' (esperada: 0.1.124)."
-              exit 1
-            fi
-          else
-            echo "::error::Falta scripts/VERSION.txt; não é possível confirmar a versão do projeto."
+          VERSION_FILE="$PROJECT_DIR/scripts/VERSION.txt"
+          if [ ! -f "$VERSION_FILE" ]; then
+            echo "::error::Falta scripts/VERSION.txt; não é possível validar a versão."
+            exit 1
+          fi
+          SCRIPT_VERSION="$(tr -d '\r\n ' < "$VERSION_FILE")"
+          if [ "$SCRIPT_VERSION" != "$PROJECT_VERSION" ]; then
+            echo "::error::Versão interna '$SCRIPT_VERSION'; esperada '$PROJECT_VERSION'."
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          mkdir -p "$GITHUB_WORKSPACE/build"
+          echo "PROJECT_VERSION=$SCRIPT_VERSION" >> "$GITHUB_ENV"
           echo "Projeto selecionado: $PROJECT_DIR"
-          echo "Versão dos scripts: $SCRIPT_VERSION"
-          echo "ZIP selecionado: $ARCHIVE"
 
-      - name: Auditar recursos 3D e separar fontes Blender
+      - name: Auditar modelos 3D e testes do projeto
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-
-          echo "Modelos GLB encontrados:"
-          find . -type f -iname '*.glb' -print | sort || true
-
-          # O Godot deve importar os GLB, não tentar importar ficheiros-fonte .blend.
-          # Preserva os .blend no diretório temporário do runner, fora da raiz do projeto.
-          BLENDER_SOURCE_DIR="$RUNNER_TEMP/blender-source"
-          mkdir -p "$BLENDER_SOURCE_DIR"
-          BLEND_COUNT=0
-          while IFS= read -r -d '' BLEND_FILE; do
-            RELATIVE_PATH="${BLEND_FILE#"$PROJECT_DIR"/}"
-            DESTINATION="$BLENDER_SOURCE_DIR/$RELATIVE_PATH"
-            mkdir -p "$(dirname "$DESTINATION")"
-            mv "$BLEND_FILE" "$DESTINATION"
-            BLEND_COUNT=$((BLEND_COUNT + 1))
-          done < <(find "$PROJECT_DIR" -type f -iname '*.blend' -print0)
-
-          GLB_COUNT="$(find "$PROJECT_DIR" -type f -iname '*.glb' | wc -l)"
-          echo "Fontes Blender guardadas fora do projeto Godot: $BLEND_COUNT"
-          echo "Modelos exportados GLB disponíveis ao Godot: $GLB_COUNT"
-
+          GLB_COUNT="$(find . -type f -iname '*.glb' | wc -l)"
+          echo "Modelos GLB encontrados: $GLB_COUNT"
           if [ "$GLB_COUNT" -eq 0 ]; then
-            echo "::error::Não existem modelos .glb no projeto; os modelos 3D exportados são necessários para o jogo."
+            echo "::error::Não existem modelos .glb no projeto."
             exit 1
           fi
-
           if [ -f tests/quality_audit.py ]; then
             python3 tests/quality_audit.py
           else
-            echo "::warning::tests/quality_audit.py não existe; auditoria específica do projeto não foi executada."
+            echo "::warning::tests/quality_audit.py não existe; auditoria específica não executada."
           fi
 
-      - name: Preparar templates oficiais de exportação
+      - name: Preparar templates oficiais Godot
         shell: bash
         run: |
           set -euo pipefail
-          TEMPLATE_VERSION="4.5.stable"
-          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/$TEMPLATE_VERSION"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.5.stable"
           mkdir -p "$RUNNER_TEMP/godot-templates" "$TEMPLATE_DIR"
-
           curl --fail --location --retry 3 \
             "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
             -o "$RUNNER_TEMP/godot-templates.tpz"
@@ -251,14 +209,13 @@ jobs:
           set -o pipefail
           timeout 20m godot --headless --editor --path "$PROJECT_DIR" --import \
             2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
-
           if grep -E '(^|[[:space:]])(SCRIPT ERROR|Parse Error|Failed to load script|ERROR:)' \
             "$GITHUB_WORKSPACE/godot-import.log"; then
-            echo "::error::Foram encontrados erros no log de importação."
+            echo "::error::Erros encontrados durante a importação."
             exit 1
           fi
 
-      - name: Teste de arranque headless
+      - name: Testar arranque headless
         shell: bash
         run: |
           set -euo pipefail
@@ -271,6 +228,7 @@ jobs:
         run: |
           set -euo pipefail
           set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build"
           APK_PATH="$GITHUB_WORKSPACE/build/$APK_NAME"
           godot --headless --path "$PROJECT_DIR" --export-debug "Android" "$APK_PATH" \
             2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
@@ -282,7 +240,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: A-Ultima-Expedicao-v0.1.124-Android
+          name: A-Ultima-Expedicao-v0.1.126-Android
           path: |
             build/*.apk
             godot-import.log
