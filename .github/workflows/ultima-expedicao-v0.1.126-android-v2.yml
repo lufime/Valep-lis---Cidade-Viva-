@@ -122,7 +122,7 @@ jobs:
           for script in blender/build_polar_station_exterior.py blender/build_station_interior.py blender/build_creature_entity.py blender/build_player_expedition_survivor.py blender/build_rigged_animated_players.py; do
             test -s "$script"
             log="$GITHUB_WORKSPACE/blender-logs/$(basename "$script" .py).log"
-            timeout 180s blender --background --factory-startup --python "$script" >"$log" 2>&1 || { cat "$log"; exit 1; }
+            timeout 180s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background --factory-startup --python "$script" >"$log" 2>&1 || { cat "$log"; exit 1; }
           done
           for model in polar_station_exterior station_interior_modular entity_creature player_expedition_survivor player_expedition_rigged; do
             if [ ! -s "assets/$model.glb" ]; then
