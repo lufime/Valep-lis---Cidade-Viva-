@@ -72,8 +72,7 @@ jobs:
           cd "$PROJECT_DIR"
           python tests/quality_audit.py
 
-      # A cena/runtime usa station_corridor_kit.glb (confirmado em
-      # scripts/expedition.gd); o .blend é fonte editável, não recurso runtime.
+      # A cena/runtime usa station_corridor_kit.glb; o .blend é fonte editável.
       # Retirá-lo da raiz do projeto evita que o editor Godot tente importá-lo
       # como recurso adicional. O original fica preservado no workspace.
       - name: Separar fontes Blender antes da importação Godot
@@ -101,12 +100,13 @@ jobs:
           use-dotnet: false
           include-templates: true
 
-      - name: Confirmar ferramentas e versões
+      # Os .blend já foram separados do projeto Godot. O runtime utiliza o .glb,
+      # por isso não se chama Blender nem se declara essa ferramenta necessária.
+      - name: Confirmar ferramenta e versão do Godot
         shell: bash
         run: |
           set -euo pipefail
           godot --version
-          blender --version | head -n 2
 
       - name: Importar recursos no Godot
         shell: bash
@@ -115,8 +115,6 @@ jobs:
           cd "$PROJECT_DIR"
           log="$GITHUB_WORKSPACE/godot-import.log"
           printf 'IMPORT_START_UTC=%s\n' "$(date -u +%FT%TZ)" | tee "$log"
-          # Importação inicial única. O pipefail garante que um erro do Godot
-          # não fica escondido pelo sucesso do tee.
           godot --headless --editor --path "$PROJECT_DIR" --quit 2>&1 | tee -a "$log"
           rc=${PIPESTATUS[0]}
           printf 'IMPORT_EXIT_CODE=%s\nIMPORT_END_UTC=%s\n' "$rc" "$(date -u +%FT%TZ)" | tee -a "$log"
@@ -124,8 +122,6 @@ jobs:
             echo "::error::A importação do Godot falhou com código $rc. Consultar godot-import.log."
             exit "$rc"
           fi
-          # Não declara sucesso só porque o processo terminou: verifica que
-          # o projeto gerou o cache de importação para os recursos de origem.
           if [ ! -d "$PROJECT_DIR/.godot/imported" ]; then
             echo "::error::Godot terminou sem criar .godot/imported; importação não comprovada."
             exit 1
