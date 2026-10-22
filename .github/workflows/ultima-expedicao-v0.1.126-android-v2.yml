@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+    paths-ignore:
+      - 'A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ultima-expedicao-v0126-android-${{ github.ref }}
@@ -146,6 +148,26 @@ jobs:
           test -s "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
           unzip -tq "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
           sha256sum "$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
+
+      - name: Publicar ZIP atualizado na branch main
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip_src="$GITHUB_WORKSPACE/dist/A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
+          zip_dest="A-Ultima-Expedicao-v0.1.126-BLENDER-CORRIGIDO.zip"
+          test -s "$zip_src"
+          cp "$zip_src" "$GITHUB_WORKSPACE/$zip_dest"
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$zip_dest"
+          if git diff --cached --quiet; then
+            echo "ZIP já está atualizado; nenhuma alteração binária a publicar."
+          else
+            git commit -m "Publicar ZIP atualizado com modelos Blender [skip ci]"
+            git push origin HEAD:main
+            echo "ZIP publicado em main: $zip_dest"
+          fi
 
       # O GLB fica no projeto; o .blend original é guardado no artefacto de diagnóstico.
       - name: Separar fontes Blender antes da importação Godot
