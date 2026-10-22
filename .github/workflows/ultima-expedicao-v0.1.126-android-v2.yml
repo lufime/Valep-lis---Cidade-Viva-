@@ -110,8 +110,17 @@ jobs:
             echo "A instalar Blender e NumPy com limites de tempo..."
             sudo timeout 600s apt-get update
             sudo timeout 600s apt-get install -y blender python3-numpy
+            # O Blender instalado pelo apt usa o seu próprio Python e pode não
+            # encontrar o NumPy do sistema. Instalar uma wheel compatível com
+            # Python 3.12 numa pasta isolada e expô-la explicitamente ao Blender.
+            python -m pip install --disable-pip-version-check --no-input --target "$RUNNER_TEMP/blender-python-packages" "numpy<2"
+            export BLENDER_PYTHONPATH="$RUNNER_TEMP/blender-python-packages:/usr/lib/python3/dist-packages"
+            echo "A validar NumPy dentro do próprio Blender..."
+            timeout 60s env PYTHONPATH="$BLENDER_PYTHONPATH" blender --background --python-expr "import sys; sys.path.insert(0, '$RUNNER_TEMP/blender-python-packages'); import numpy; print('BLENDER_NUMPY_IMPORT_PASS=' + numpy.__version__)"
             echo "A exportar GLB; limite de 120 segundos..."
-            timeout 120s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background "$blend" --python-expr "import bpy; import numpy; print('NUMPY_VERSION=' + numpy.__version__); bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
+            timeout 120s env PYTHONPATH="$BLENDER_PYTHONPATH" blender --background "$blend" --python-expr "import sys; sys.path.insert(0, '$RUNNER_TEMP/blender-python-packages'); import bpy; import numpy; print('NUMPY_VERSION=' + numpy.__version__); bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
+            test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
+            echo "BLENDER_GLB_EXPORT_PASS=True"
           fi
           test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
           echo "BLENDER_GLB_GENERATION_PASS=True"
@@ -158,6 +167,9 @@ jobs:
           "$BLENDER_BIN" --version
           cd "$PROJECT_DIR"
           mkdir -p "$GITHUB_WORKSPACE/blender-logs"
+          python -m pip install --disable-pip-version-check --no-input --target "$RUNNER_TEMP/blender-python-packages" "numpy<2"
+          export BLENDER_PYTHONPATH="$RUNNER_TEMP/blender-python-packages:/usr/lib/python3/dist-packages"
+          timeout 60s env PYTHONPATH="$BLENDER_PYTHONPATH" "$BLENDER_BIN" --background --python-expr "import sys; sys.path.insert(0, '$RUNNER_TEMP/blender-python-packages'); import numpy; print('BLENDER_NUMPY_IMPORT_PASS=' + numpy.__version__)"
           for script in blender/build_polar_station_exterior.py blender/build_station_interior.py blender/build_creature_entity.py blender/build_player_expedition_survivor.py blender/build_rigged_animated_players.py; do
             if [ ! -s "$script" ]; then
               echo "::error::Script Blender em falta ou vazio: $PROJECT_DIR/$script"
@@ -167,7 +179,7 @@ jobs:
             fi
             log="$GITHUB_WORKSPACE/blender-logs/$(basename "$script" .py).log"
             echo "BLENDER_SCRIPT_START=$script"
-            if ! timeout 180s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" "$BLENDER_BIN" --background --factory-startup --python "$script" >"$log" 2>&1; then
+            if ! timeout 180s env PYTHONPATH="$BLENDER_PYTHONPATH" "$BLENDER_BIN" --background --factory-startup --python "$script" >"$log" 2>&1; then
               echo "::error::Script Blender falhou: $script"
               cat "$log"
               exit 1
