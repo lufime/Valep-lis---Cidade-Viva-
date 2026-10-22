@@ -87,9 +87,27 @@ jobs:
           cd "$PROJECT_DIR"
           python tests/quality_audit.py
 
-      # A cena/runtime usa station_corridor_kit.glb; o .blend é fonte editável.
-      # Retirá-lo da raiz do projeto evita que o editor Godot tente importá-lo
-      # como recurso adicional. O original fica preservado no workspace.
+      # O ZIP atual inclui a fonte .blend, mas não o .glb exigido pelo runtime.
+      # Gerar o GLB a partir da fonte com Blender antes de a separar do projeto.
+      - name: Gerar recurso GLB a partir da fonte Blender, se necessário
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$PROJECT_DIR/assets/station_corridor_kit.glb" ]; then
+            blend="$PROJECT_DIR/assets/station_corridor_kit.blend"
+            if [ ! -s "$blend" ]; then
+              echo "::error::Falta station_corridor_kit.glb e também a fonte station_corridor_kit.blend."
+              find "$PROJECT_DIR/assets" -maxdepth 2 -type f -print | sort
+              exit 1
+            fi
+            sudo apt-get update
+            sudo apt-get install -y blender
+            blender --background "$blend" --python-expr "import bpy; bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
+          fi
+          test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
+          echo "BLENDER_GLB_GENERATION_PASS=True"
+
+      # O GLB fica no projeto; o .blend original é guardado no artefacto de diagnóstico.
       - name: Separar fontes Blender antes da importação Godot
         shell: bash
         run: |
