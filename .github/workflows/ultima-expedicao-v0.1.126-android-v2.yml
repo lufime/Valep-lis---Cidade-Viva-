@@ -71,6 +71,18 @@ jobs:
           test "$(tr -d '\r\n' < "$root/VERSION.txt")" = "0.1.126"
           test "$(tr -d '\r\n' < "$root/scripts/VERSION.txt")" = "0.1.126"
 
+      - name: Corrigir tipo explícito de end_z antes das auditorias
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$PROJECT_DIR/scripts/expedition.gd"
+          test -s "$target"
+          if grep -Fq 'var end_z := end_sign * room_depth * 0.5' "$target"; then
+            sed -i 's/var end_z := end_sign \* room_depth \* 0.5/var end_z: float = float(end_sign) * float(room_depth) * 0.5/' "$target"
+          fi
+          grep -Fq 'var end_z: float = float(end_sign) * float(room_depth) * 0.5' "$target"
+          echo "END_Z_EXPLICIT_FLOAT_FIX_PASS=True"
+
       - name: Validar preset Android
         shell: bash
         run: |
