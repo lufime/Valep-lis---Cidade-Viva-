@@ -147,8 +147,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Blender já foi instalado no passo de geração do GLB; reutilizar a instalação.
-          command -v blender
+          # Garantir Blender disponível neste job; não presumir instalação de passos anteriores.
+          if ! command -v blender >/dev/null 2>&1; then
+            echo "Blender não encontrado no PATH; instalar dependência no runner."
+            sudo apt-get update
+            sudo apt-get install -y blender
+          fi
+          BLENDER_BIN="$(command -v blender)"
+          echo "BLENDER_BIN=$BLENDER_BIN"
+          "$BLENDER_BIN" --version
           cd "$PROJECT_DIR"
           mkdir -p "$GITHUB_WORKSPACE/blender-logs"
           for script in blender/build_polar_station_exterior.py blender/build_station_interior.py blender/build_creature_entity.py blender/build_player_expedition_survivor.py blender/build_rigged_animated_players.py; do
@@ -160,7 +167,7 @@ jobs:
             fi
             log="$GITHUB_WORKSPACE/blender-logs/$(basename "$script" .py).log"
             echo "BLENDER_SCRIPT_START=$script"
-            if ! timeout 180s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background --factory-startup --python "$script" >"$log" 2>&1; then
+            if ! timeout 180s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" "$BLENDER_BIN" --background --factory-startup --python "$script" >"$log" 2>&1; then
               echo "::error::Script Blender falhou: $script"
               cat "$log"
               exit 1
