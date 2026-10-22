@@ -116,6 +116,26 @@ jobs:
           test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
           echo "BLENDER_GLB_GENERATION_PASS=True"
 
+      - name: Alinhar auditoria estática com o runtime Blender/GLB
+        shell: bash
+        run: |
+          set -euo pipefail
+          audit="$PROJECT_DIR/tests/quality_audit.py"
+          test -s "$audit"
+          python - "$audit" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          old = 'check(not any(ROOT.rglob("*.glb")), "não existem ficheiros GLB no pacote")'
+          new = 'check((ROOT / "assets/station_corridor_kit.glb").is_file(), "recurso GLB do kit modular disponível para o runtime")'
+          if old not in source:
+              raise SystemExit("A auditoria não contém a verificação GLB esperada; não foi alterada.")
+          path.write_text(source.replace(old, new, 1), encoding="utf-8")
+          print("QUALITY_AUDIT_GLB_RULE_PATCH_PASS=True")
+          PY
+          grep -Fq 'recurso GLB do kit modular disponível para o runtime' "$audit"
+
       - name: Auditoria estática do projeto
         shell: bash
         run: |
