@@ -1,0 +1,4 @@
+Teste temporario de escrita do conector GitHub.
+Repositorio: lufime/Valep-lis---Cidade-Viva-
+Objetivo: confirmar escrita e leitura pela API.
+Este ficheiro e apenas de teste; nao faz parte do jogo.
