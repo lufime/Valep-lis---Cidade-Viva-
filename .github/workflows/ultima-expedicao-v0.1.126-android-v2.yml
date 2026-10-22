@@ -72,16 +72,27 @@ jobs:
           cd "$PROJECT_DIR"
           python tests/quality_audit.py
 
-      # O projeto contém assets/station_corridor_kit.blend. Godot depende do
-      # executável Blender para importar ficheiros .blend em Linux.
-      - name: Instalar Blender para importar recursos .blend
+      # A cena/runtime usa station_corridor_kit.glb (confirmado em
+      # scripts/expedition.gd); o .blend é fonte editável, não recurso runtime.
+      # Retirá-lo da raiz do projeto evita que o editor Godot tente importá-lo
+      # como recurso adicional. O original fica preservado no workspace.
+      - name: Separar fontes Blender antes da importação Godot
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y blender
-          command -v blender
-          blender --version | head -n 2
+          mkdir -p "$GITHUB_WORKSPACE/blender-source"
+          while IFS= read -r -d '' src; do
+            rel="${src#"$PROJECT_DIR"/}"
+            dest="$GITHUB_WORKSPACE/blender-source/$rel"
+            mkdir -p "$(dirname "$dest")"
+            mv "$src" "$dest"
+            echo "Fonte Blender separada: $rel"
+          done < <(find "$PROJECT_DIR" -type f -name '*.blend' -print0)
+          if find "$PROJECT_DIR" -type f -name '*.blend' -print -quit | grep -q .; then
+            echo "::error::Ainda existem ficheiros .blend dentro do projeto Godot."
+            exit 1
+          fi
+          test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
 
       - name: Instalar Godot 4.5
         uses: chickensoft-games/setup-godot@v2
@@ -170,6 +181,7 @@ jobs:
           name: A-Ultima-Expedicao-v0.1.126-Android-Diagnostico
           path: |
             project/**/build/A-Ultima-Expedicao-v0.1.126-android.apk
+            blender-source/**
             godot-import.log
             godot-startup.log
             godot-export.log
