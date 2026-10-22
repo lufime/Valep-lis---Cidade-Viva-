@@ -94,13 +94,6 @@ jobs:
           grep -Fq 'build/A-Ultima-Expedicao-v0.1.126-android.apk' export_presets.cfg
           echo "ANDROID_PRESET_STATIC_PASS=True"
 
-      - name: Auditoria estática do projeto
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          python tests/quality_audit.py
-
       # O ZIP atual inclui a fonte .blend, mas não o .glb exigido pelo runtime.
       # Gerar o GLB a partir da fonte com Blender antes de a separar do projeto.
       - name: Gerar recurso GLB a partir da fonte Blender, se necessário
@@ -122,6 +115,13 @@ jobs:
           fi
           test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
           echo "BLENDER_GLB_GENERATION_PASS=True"
+
+      - name: Auditoria estática do projeto
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          python tests/quality_audit.py
 
       - name: Executar scripts Blender e verificar modelos 3D
         shell: bash
