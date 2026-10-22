@@ -1,0 +1,132 @@
+name: A Última Expedição V0.1.126 — PRE-FLIGHT e APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultima-expedicao-v0126-android-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: 4.5.0
+  APK_NAME: A-Ultima-Expedicao-v0.1.126-android.apk
+
+jobs:
+  preflight-android:
+    name: Auditar, importar, testar e exportar APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Obter repositório
+        uses: actions/checkout@v4
+
+      - name: Preparar Python e ferramentas
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Localizar e extrair ZIP do projeto V0.1.126
+        shell: bash
+        run: |
+          set -euo pipefail
+          zipfile="$(find . -maxdepth 2 -type f -name 'A-Ultima-Expedicao-Godot-v0.1.126*.zip' -print -quit)"
+          if [ -z "$zipfile" ]; then
+            echo "::error::Não foi encontrado ZIP do projeto V0.1.126."
+            exit 1
+          fi
+          mkdir -p project
+          unzip -q "$zipfile" -d project
+          root="$(find project -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$root"
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/$root" >> "$GITHUB_ENV"
+          echo "Projeto selecionado: $root"
+          test -s "$root/project.godot"
+          test -s "$root/export_presets.cfg"
+          test -s "$root/scripts/VERSION.txt"
+          test "$(tr -d '\r\n' < "$root/VERSION.txt")" = "0.1.126"
+          test "$(tr -d '\r\n' < "$root/scripts/VERSION.txt")" = "0.1.126"
+
+      - name: Validar preset Android sem o erro de expressão regular
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          test -s export_presets.cfg
+          grep -Eq '^\[preset\.[0-9]+\]' export_presets.cfg
+          grep -Eq '^platform="Android"$' export_presets.cfg
+          grep -Eq '^name="Android"$' export_presets.cfg
+          grep -Fq 'build/A-Ultima-Expedicao-v0.1.126-android.apk' export_presets.cfg
+          echo "ANDROID_PRESET_STATIC_PASS=True"
+
+      - name: Auditoria estática do projeto
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          python tests/quality_audit.py
+
+      - name: Instalar Godot 4.5
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.5.0
+          use-dotnet: false
+          include-templates: true
+
+      - name: Confirmar versão do Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot --version
+
+      - name: Importar recursos no Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          godot --headless --editor --path . --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
+
+      - name: Teste de arranque headless
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          godot --headless --path . --quit-after 5 2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Verificar configuração de exportação
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          mkdir -p build
+          godot --headless --path . --editor --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-export-check.log"
+
+      - name: Exportar APK Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          godot --headless --path . --export-debug "Android" "build/$APK_NAME" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
+          test -s "build/$APK_NAME"
+          echo "APK_EXPORT_PASS=True"
+
+      - name: Publicar APK e logs de auditoria
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-v0.1.126-Android
+          path: |
+            project/**/build/A-Ultima-Expedicao-v0.1.126-android.apk
+            godot-import.log
+            godot-startup.log
+            godot-export-check.log
+            godot-export.log
+          if-no-files-found: warn
+          retention-days: 14
