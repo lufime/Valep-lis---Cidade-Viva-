@@ -100,9 +100,11 @@ jobs:
               find "$PROJECT_DIR/assets" -maxdepth 2 -type f -print | sort
               exit 1
             fi
-            sudo apt-get update
-            sudo apt-get install -y blender python3-numpy
-            PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background "$blend" --python-expr "import bpy; import numpy; print('NUMPY_VERSION=' + numpy.__version__); bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
+            echo "A instalar Blender e NumPy com limites de tempo..."
+            sudo timeout 180s apt-get update
+            sudo timeout 180s apt-get install -y blender python3-numpy
+            echo "A exportar GLB; limite de 120 segundos..."
+            timeout 120s env PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background "$blend" --python-expr "import bpy; import numpy; print('NUMPY_VERSION=' + numpy.__version__); bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
           fi
           test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
           echo "BLENDER_GLB_GENERATION_PASS=True"
