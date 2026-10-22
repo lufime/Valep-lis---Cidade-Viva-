@@ -34,7 +34,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          zipfile="$(find . -maxdepth 2 -type f -name 'A-Ultima-Expedicao-Godot-v0.1.126*.zip' -print -quit)"
+          zipfile="$(find . -maxdepth 2 -type f -name 'A-Ultima-Expedicao*0.1.126*.zip' -print -quit)"
           if [ -z "$zipfile" ]; then
             echo "::error::Não foi encontrado ZIP do projeto V0.1.126."
             exit 1
