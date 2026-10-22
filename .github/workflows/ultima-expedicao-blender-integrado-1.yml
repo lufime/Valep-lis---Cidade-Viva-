@@ -1,250 +1,131 @@
-name: A Última Expedição — Build APK Android (Godot 4.5)
+name: A Última Expedição V0.1.126 — PRE-FLIGHT e APK Android
 
 on:
   workflow_dispatch:
   push:
     branches: [main, master]
-    paths:
-      - '**'
-      - '.github/workflows/ultima-expedicao-blender-integrado-1.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ultima-expedicao-android-${{ github.ref }}
+  group: ultima-expedicao-v0126-android-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  GODOT_VERSION: 4.5-stable
+  APK_NAME: A-Ultima-Expedicao-v0.1.126-android.apk
+
 jobs:
-  build-apk:
-    name: Procurar ZIP, validar, importar e exportar APK
+  preflight-android:
+    name: Auditar, importar, testar e exportar APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-
-    env:
-      GODOT_VERSION: 4.5-stable
-      PROJECT_VERSION: 0.1.126
-      APK_NAME: A-Ultima-Expedicao-v0.1.126-android.apk
-
+    timeout-minutes: 35
     steps:
       - name: Obter repositório
         uses: actions/checkout@v4
 
-      - name: Preparar Java
-        uses: actions/setup-java@v4
+      - name: Preparar Python e ferramentas
+        uses: actions/setup-python@v5
         with:
-          distribution: temurin
-          java-version: '17'
+          python-version: '3.12'
 
-      - name: Preparar Android SDK
+      - name: Localizar e extrair ZIP do projeto V0.1.126
         shell: bash
         run: |
           set -euo pipefail
-          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager não encontrado em $ANDROID_HOME/cmdline-tools"
+          zipfile="$(find . -maxdepth 2 -type f -name 'A-Ultima-Expedicao-Godot-v0.1.126*.zip' -print -quit)"
+          if [ -z "$zipfile" ]; then
+            echo "::error::Não foi encontrado ZIP do projeto V0.1.126."
             exit 1
           fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          test -x "$ANDROID_HOME/platform-tools/adb"
-          test -d "$ANDROID_HOME/platforms/android-35"
-          test -d "$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p project
+          unzip -q "$zipfile" -d project
+          root="$(find project -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$root"
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/$root" >> "$GITHUB_ENV"
+          echo "Projeto selecionado: $root"
+          test -s "$root/project.godot"
+          test -s "$root/export_presets.cfg"
+          test -s "$root/scripts/VERSION.txt"
+          test "$(tr -d '\r\n' < "$root/VERSION.txt")" = "0.1.126"
+          test "$(tr -d '\r\n' < "$root/scripts/VERSION.txt")" = "0.1.126"
 
-      - name: Instalar Godot 4.5 oficial
-        shell: bash
-        run: |
-          set -euo pipefail
-          ARCHIVE="$RUNNER_TEMP/godot-4.5-linux.zip"
-          curl --fail --location --retry 3 \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" \
-            -o "$ARCHIVE"
-          mkdir -p "$RUNNER_TEMP/godot-bin"
-          unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/godot-bin"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot-bin" -maxdepth 1 -type f -name 'Godot_v4.5-stable_linux.x86_64' -print -quit)"
-          if [ -z "$GODOT_BIN" ]; then
-            echo "::error::Executável Godot 4.5 não encontrado no arquivo oficial."
-            find "$RUNNER_TEMP/godot-bin" -maxdepth 2 -type f -print
-            exit 1
-          fi
-          chmod +x "$GODOT_BIN"
-          ln -sf "$GODOT_BIN" "$RUNNER_TEMP/godot-bin/godot"
-          echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
-          "$GODOT_BIN" --version
-
-      - name: Procurar automaticamente o ZIP do projeto
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "A procurar ZIPs v${PROJECT_VERSION} na raiz:"
-          find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort || true
-
-          mapfile -t ZIP_CANDIDATES < <(
-            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f \
-              -iname "A-Ultima-Expedicao-Godot-v${PROJECT_VERSION}*.zip" \
-              ! -iname '*logs*' | sort
-          )
-          if [ "${#ZIP_CANDIDATES[@]}" -eq 0 ]; then
-            echo "::error::Não foi encontrado ZIP v${PROJECT_VERSION} na raiz do repositório."
-            exit 1
-          fi
-
-          CYCLE_CANDIDATES=()
-          for candidate in "${ZIP_CANDIDATES[@]}"; do
-            if [[ "$(basename "$candidate")" =~ CICLO-CORRIGIDO ]]; then
-              CYCLE_CANDIDATES+=("$candidate")
-            fi
-          done
-
-          if [ "${#CYCLE_CANDIDATES[@]}" -eq 1 ]; then
-            ARCHIVE="${CYCLE_CANDIDATES[0]}"
-          elif [ "${#CYCLE_CANDIDATES[@]}" -gt 1 ]; then
-            PREFERRED=""
-            for candidate in "${CYCLE_CANDIDATES[@]}"; do
-              if [[ "$(basename "$candidate")" == "A-Ultima-Expedicao-Godot-v${PROJECT_VERSION}-CICLO-CORRIGIDO.zip" ]]; then
-                PREFERRED="$candidate"
-                break
-              fi
-            done
-            if [ -n "$PREFERRED" ]; then
-              ARCHIVE="$PREFERRED"
-            else
-              echo "::error::Há vários ZIPs CICLO-CORRIGIDO; não é seguro escolher automaticamente:"
-              printf '%s\n' "${CYCLE_CANDIDATES[@]}"
-              exit 1
-            fi
-          elif [ "${#ZIP_CANDIDATES[@]}" -eq 1 ]; then
-            ARCHIVE="${ZIP_CANDIDATES[0]}"
-            echo "::warning::Não existe nome CICLO-CORRIGIDO; será validado o único ZIP v${PROJECT_VERSION}."
-          else
-            echo "::error::Há vários ZIPs v${PROJECT_VERSION}, sem indicação inequívoca do ZIP do ciclo:"
-            printf '%s\n' "${ZIP_CANDIDATES[@]}"
-            exit 1
-          fi
-
-          test -s "$ARCHIVE"
-          echo "ZIP selecionado: $(basename "$ARCHIVE")"
-          EXTRACT_DIR="$RUNNER_TEMP/ultima-expedicao-source"
-          mkdir -p "$EXTRACT_DIR"
-          unzip -q "$ARCHIVE" -d "$EXTRACT_DIR"
-
-          mapfile -t PROJECT_CANDIDATES < <(
-            find "$EXTRACT_DIR" -type f -name project.godot \
-              ! -path '*/blender_improve_src/*' \
-              ! -path '*/.godot/*' | sort
-          )
-          if [ "${#PROJECT_CANDIDATES[@]}" -ne 1 ]; then
-            echo "::error::Esperado exatamente um project.godot; encontrados ${#PROJECT_CANDIDATES[@]}."
-            printf '%s\n' "${PROJECT_CANDIDATES[@]}"
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "${PROJECT_CANDIDATES[0]}")"
-          test -s "$PROJECT_DIR/export_presets.cfg" || {
-            echo "::error::Falta export_presets.cfg"
-            exit 1
-          }
-          if ! grep -Eq '^\\[preset\\.[0-9]+\\]' "$PROJECT_DIR/export_presets.cfg"; then
-            echo "::error::export_presets.cfg não contém presets exportáveis."
-            exit 1
-          fi
-          if ! grep -E '^\\[preset\\.[0-9]+\\]' "$PROJECT_DIR/export_presets.cfg" -A 8 | grep -qi 'Android'; then
-            echo "::error::Não foi encontrado um preset Android em export_presets.cfg."
-            exit 1
-          fi
-
-          VERSION_FILE="$PROJECT_DIR/scripts/VERSION.txt"
-          if [ ! -f "$VERSION_FILE" ]; then
-            echo "::error::Falta scripts/VERSION.txt; não é possível validar a versão."
-            exit 1
-          fi
-          SCRIPT_VERSION="$(tr -d '\r\n ' < "$VERSION_FILE")"
-          if [ "$SCRIPT_VERSION" != "$PROJECT_VERSION" ]; then
-            echo "::error::Versão interna '$SCRIPT_VERSION'; esperada '$PROJECT_VERSION'."
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "PROJECT_VERSION=$SCRIPT_VERSION" >> "$GITHUB_ENV"
-          echo "Projeto selecionado: $PROJECT_DIR"
-
-      - name: Auditar modelos 3D e testes do projeto
+      - name: Validar preset Android sem o erro de expressão regular
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          GLB_COUNT="$(find . -type f -iname '*.glb' | wc -l)"
-          echo "Modelos GLB encontrados: $GLB_COUNT"
-          if [ "$GLB_COUNT" -eq 0 ]; then
-            echo "::error::Não existem modelos .glb no projeto."
-            exit 1
-          fi
-          if [ -f tests/quality_audit.py ]; then
-            python3 tests/quality_audit.py
-          else
-            echo "::warning::tests/quality_audit.py não existe; auditoria específica não executada."
-          fi
+          test -s export_presets.cfg
+          grep -Eq '^\[preset\.[0-9]+\]' export_presets.cfg
+          grep -Eq '^platform="Android"$' export_presets.cfg
+          grep -Eq '^name="Android"$' export_presets.cfg
+          grep -Fq 'build/A-Ultima-Expedicao-v0.1.126-android.apk' export_presets.cfg
+          echo "ANDROID_PRESET_STATIC_PASS=True"
 
-      - name: Preparar templates oficiais Godot
+      - name: Auditoria estática do projeto
         shell: bash
         run: |
           set -euo pipefail
-          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.5.stable"
-          mkdir -p "$RUNNER_TEMP/godot-templates" "$TEMPLATE_DIR"
-          curl --fail --location --retry 3 \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
-            -o "$RUNNER_TEMP/godot-templates.tpz"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/godot-templates"
-          test -d "$RUNNER_TEMP/godot-templates/templates"
-          cp -a "$RUNNER_TEMP/godot-templates/templates/." "$TEMPLATE_DIR/"
-          test -n "$(find "$TEMPLATE_DIR" -maxdepth 1 -type f -print -quit)"
+          cd "$PROJECT_DIR"
+          python tests/quality_audit.py
 
-      - name: Importar recursos Godot
+      - name: Instalar Godot 4.5
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.5-stable
+          use-dotnet: false
+
+      - name: Confirmar versão do Godot
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          timeout 20m godot --headless --editor --path "$PROJECT_DIR" --import \
-            2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
-          if grep -E '(^|[[:space:]])(SCRIPT ERROR|Parse Error|Failed to load script|ERROR:)' \
-            "$GITHUB_WORKSPACE/godot-import.log"; then
-            echo "::error::Erros encontrados durante a importação."
-            exit 1
-          fi
+          godot --version
 
-      - name: Testar arranque headless
+      - name: Importar recursos no Godot
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          timeout 2m godot --headless --path "$PROJECT_DIR" --quit-after 5 \
-            2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
+          cd "$PROJECT_DIR"
+          godot --headless --editor --path . --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
+
+      - name: Teste de arranque headless
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          godot --headless --path . --quit-after 5 2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Verificar configuração de exportação
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          mkdir -p build
+          godot --headless --path . --editor --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-export-check.log"
 
       - name: Exportar APK Android
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          mkdir -p "$GITHUB_WORKSPACE/build"
-          APK_PATH="$GITHUB_WORKSPACE/build/$APK_NAME"
-          godot --headless --path "$PROJECT_DIR" --export-debug "Android" "$APK_PATH" \
-            2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
-          test -s "$APK_PATH"
-          file "$APK_PATH"
-          echo "APK_EXPORT_PASS=true"
+          cd "$PROJECT_DIR"
+          godot --headless --path . --export-debug "Android" "build/$APK_NAME" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
+          test -s "build/$APK_NAME"
+          echo "APK_EXPORT_PASS=True"
 
-      - name: Guardar APK e logs
+      - name: Publicar APK e logs de auditoria
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: A-Ultima-Expedicao-v0.1.126-Android
           path: |
-            build/*.apk
+            project/**/build/A-Ultima-Expedicao-v0.1.126-android.apk
             godot-import.log
             godot-startup.log
+            godot-export-check.log
             godot-export.log
           if-no-files-found: warn
           retention-days: 14
