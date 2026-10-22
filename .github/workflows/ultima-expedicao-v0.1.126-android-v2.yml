@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ultima-expedicao-v0126-android-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   GODOT_VERSION: 4.5.0
