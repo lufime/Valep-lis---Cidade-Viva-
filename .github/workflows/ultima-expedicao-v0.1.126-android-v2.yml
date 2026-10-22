@@ -123,8 +123,16 @@ jobs:
             timeout 180s blender --background --factory-startup --python "$script" >"$log" 2>&1 || { cat "$log"; exit 1; }
           done
           for model in polar_station_exterior station_interior_modular entity_creature player_expedition_survivor player_expedition_rigged; do
-            test -s "assets/$model.glb"
-            test -s "assets/$model.blend"
+            if [ ! -s "assets/$model.glb" ]; then
+              echo "::error::Modelo GLB em falta: assets/$model.glb"
+              exit 1
+            fi
+          done
+          for source in polar_station_exterior.blend station_interior_modular.blend creature_entity.blend player_expedition_survivor.blend player_expedition_rigged.blend; do
+            if [ ! -s "assets/$source" ]; then
+              echo "::error::Fonte Blender em falta: assets/$source"
+              exit 1
+            fi
           done
 
       # O GLB fica no projeto; o .blend original é guardado no artefacto de diagnóstico.
