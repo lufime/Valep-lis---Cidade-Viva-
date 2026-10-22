@@ -102,7 +102,7 @@ jobs:
             fi
             sudo apt-get update
             sudo apt-get install -y blender python3-numpy
-            blender --background "$blend" --python-expr "import bpy; bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
+            PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender --background "$blend" --python-expr "import bpy; import numpy; print('NUMPY_VERSION=' + numpy.__version__); bpy.ops.export_scene.gltf(filepath=r'$PROJECT_DIR/assets/station_corridor_kit.glb', export_format='GLB')"
           fi
           test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
           echo "BLENDER_GLB_GENERATION_PASS=True"
