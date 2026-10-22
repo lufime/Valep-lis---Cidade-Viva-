@@ -24,7 +24,6 @@ jobs:
     env:
       GODOT_VERSION: 4.5-stable
       APK_NAME: A-Ultima-Expedicao-v0.1.124-android.apk
-      PROJECT_ZIP_NAME: A-Ultima-Expedicao-Godot-v0.1.124-ARRANQUE-CORRIGIDO.zip
 
     steps:
       - name: Obter repositório
@@ -77,18 +76,65 @@ jobs:
           echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
           "$GODOT_BIN" --version
 
-      - name: Localizar ZIP exato do projeto
+      - name: Procurar automaticamente o ZIP do projeto
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE="$GITHUB_WORKSPACE/$PROJECT_ZIP_NAME"
-          if [ ! -s "$ARCHIVE" ]; then
-            echo "::error::Não foi encontrado o ZIP esperado: $PROJECT_ZIP_NAME"
-            echo "ZIPs disponíveis na raiz:"
-            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -printf '%f\n' || true
-            echo "Adiciona o ZIP da versão correta à raiz do repositório ou atualiza PROJECT_ZIP_NAME."
+
+          echo "A procurar ZIPs do projeto A Última Expedição v0.1.124..."
+          echo "ZIPs encontrados na raiz do repositório:"
+          find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort || true
+
+          # Prioridade: ZIP da versão 0.1.124 com a correção do ciclo.
+          # Aceita sufixos automáticos do GitHub, por exemplo CICLO-CORRIGIDO-1.zip.
+          mapfile -t ZIP_CANDIDATES < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f \
+            -iname 'A-Ultima-Expedicao-Godot-v0.1.124*.zip' \
+            ! -iname '*logs*' | sort)
+
+          if [ "${#ZIP_CANDIDATES[@]}" -eq 0 ]; then
+            echo "::error::Não foi encontrado nenhum ZIP A-Ultima-Expedicao-Godot-v0.1.124*.zip na raiz."
+            echo "Coloca o ZIP completo do projeto na raiz do repositório e volta a executar o workflow."
             exit 1
           fi
+
+          CYCLE_CANDIDATES=()
+          for candidate in "${ZIP_CANDIDATES[@]}"; do
+            if [[ "$(basename "$candidate")" =~ CICLO-CORRIGIDO ]]; then
+              CYCLE_CANDIDATES+=("$candidate")
+            fi
+          done
+
+          if [ "${#CYCLE_CANDIDATES[@]}" -eq 1 ]; then
+            ARCHIVE="${CYCLE_CANDIDATES[0]}"
+          elif [ "${#CYCLE_CANDIDATES[@]}" -gt 1 ]; then
+            # Se houver cópias numeradas do mesmo ZIP, prefere a que não tem sufixo numérico.
+            PREFERRED=""
+            for candidate in "${CYCLE_CANDIDATES[@]}"; do
+              if [[ "$(basename "$candidate")" == "A-Ultima-Expedicao-Godot-v0.1.124-CICLO-CORRIGIDO.zip" ]]; then
+                PREFERRED="$candidate"
+                break
+              fi
+            done
+            if [ -n "$PREFERRED" ]; then
+              ARCHIVE="$PREFERRED"
+            else
+              echo "::error::Encontrados vários ZIPs CICLO-CORRIGIDO e não foi possível escolher sem ambiguidade:"
+              printf '%s\n' "${CYCLE_CANDIDATES[@]}"
+              exit 1
+            fi
+          elif [ "${#ZIP_CANDIDATES[@]}" -eq 1 ]; then
+            ARCHIVE="${ZIP_CANDIDATES[0]}"
+            echo "::warning::Não foi encontrado um ZIP com CICLO-CORRIGIDO no nome; será validado o único ZIP da versão 0.1.124."
+          else
+            echo "::error::Foram encontrados vários ZIPs v0.1.124, mas nenhum identifica claramente a correção do ciclo:"
+            printf '%s\n' "${ZIP_CANDIDATES[@]}"
+            echo "Mantém apenas o ZIP pretendido ou identifica-o com CICLO-CORRIGIDO no nome."
+            exit 1
+          fi
+
+          test -s "$ARCHIVE"
+          echo "ZIP selecionado automaticamente: $(basename "$ARCHIVE")"
+          echo "PROJECT_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
           EXTRACT_DIR="$RUNNER_TEMP/ultima-expedicao-source"
           mkdir -p "$EXTRACT_DIR"
