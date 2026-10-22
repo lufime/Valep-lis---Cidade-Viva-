@@ -43,7 +43,22 @@ jobs:
           unzip -q "$zipfile" -d project
           root="$(find project -type f -name project.godot -printf '%h\n' -quit)"
           if [ -z "$root" ]; then
-            echo "::error::O ZIP não contém project.godot."
+            # Alguns pacotes PRE-FLIGHT são contentores: incluem o projeto
+            # Godot num segundo ZIP de referência. Extrair esse ZIP sem
+            # substituir nem alterar o pacote original.
+            nested_zip="$(find project -type f -name 'projeto_godot_v0.1.126_referencia.zip' -print -quit)"
+            if [ -z "$nested_zip" ]; then
+              echo "::error::Não foi encontrado project.godot nem ZIP Godot aninhado no pacote."
+              find project -maxdepth 4 -type f -print | sort
+              exit 1
+            fi
+            echo "Pacote contentor detetado; a extrair projeto Godot: $nested_zip"
+            unzip -q "$nested_zip" -d project/godot-project
+            root="$(find project/godot-project -type f -name project.godot -printf '%h\n' -quit)"
+          fi
+          if [ -z "$root" ]; then
+            echo "::error::O ZIP interno também não contém project.godot."
+            find project -maxdepth 5 -type f -print | sort
             exit 1
           fi
           echo "PROJECT_DIR=$GITHUB_WORKSPACE/$root" >> "$GITHUB_ENV"
