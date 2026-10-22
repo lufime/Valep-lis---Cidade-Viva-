@@ -144,6 +144,10 @@ jobs:
 
       - name: Preparar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # O pacote legado "tools" já não existe nos repositórios atuais.
+          # Instalar explicitamente os componentes usados pela exportação.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Preparar pasta de exportação
         shell: bash
