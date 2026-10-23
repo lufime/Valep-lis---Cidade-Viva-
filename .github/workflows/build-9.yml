@@ -1,0 +1,168 @@
+name: A Última Expedição V0.1.126 — PRE-FLIGHT e APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultima-expedicao-v0126-android-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: 4.5.0
+  APK_NAME: A-Ultima-Expedicao-v0.1.126-android.apk
+  MAX_FILE_MIB: 25
+
+jobs:
+  preflight-android:
+    name: Auditar, importar, testar e exportar APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Obter repositório
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Localizar projeto Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -s project.godot ]; then
+            root="$GITHUB_WORKSPACE"
+          else
+            root="$(find . -type f -name project.godot -not -path './.git/*' -printf '%h\n' -quit)"
+          fi
+          if [ -z "${root:-}" ] || [ ! -s "$root/project.godot" ]; then
+            echo "::error::Não foi encontrado project.godot. Coloca o projeto na raiz ou inclui-o no repositório."
+            exit 1
+          fi
+          echo "PROJECT_DIR=$root" >> "$GITHUB_ENV"
+          echo "Projeto encontrado em: $root"
+
+      - name: Auditar limite de 25 MiB por ficheiro
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          python - <<'PY'
+          import os, sys
+          limit = 25 * 1024 * 1024
+          oversized = []
+          lfs_patterns = []
+          if os.path.isfile(".gitattributes"):
+              with open(".gitattributes", encoding="utf-8", errors="replace") as f:
+                  for line in f:
+                      line = line.split("#", 1)[0].strip()
+                      if line and "filter=lfs" in line:
+                          lfs_patterns.append(line.split()[0])
+          import fnmatch
+          def is_lfs(path):
+              path = path.removeprefix("./")
+              return any(fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch("/" + path, pattern) for pattern in lfs_patterns)
+          for base, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d not in {".git", ".godot"}]
+              for name in files:
+                  path = os.path.join(base, name)
+                  try:
+                      size = os.path.getsize(path)
+                  except OSError:
+                      continue
+                  if size > limit and not is_lfs(path):
+                      oversized.append((size, path))
+          if oversized:
+              print("FAIL: ficheiros acima de 25 MiB que não estão cobertos por Git LFS:")
+              for size, path in sorted(oversized, reverse=True):
+                  print(f"{size / 1024 / 1024:.2f} MiB  {path}")
+              print("O workflow não remove nem comprime ficheiros automaticamente.")
+              sys.exit(1)
+          print("PASS: todos os ficheiros são <=25 MiB ou estão explicitamente configurados em .gitattributes para Git LFS.")
+          PY
+
+      - name: Verificar ficheiros essenciais e versão
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          test -s project.godot
+          test -s export_presets.cfg
+          if [ -f VERSION.txt ]; then
+            test "$(tr -d '\r\n' < VERSION.txt)" = "0.1.126"
+          fi
+          if [ -f scripts/VERSION.txt ]; then
+            test "$(tr -d '\r\n' < scripts/VERSION.txt)" = "0.1.126"
+          fi
+          if [ -f tests/quality_audit.py ]; then
+            python tests/quality_audit.py
+          else
+            echo "::warning::tests/quality_audit.py não existe; auditoria estática específica marcada como SKIP."
+          fi
+
+      - name: Instalar Godot 4.5
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.5.0
+          use-dotnet: false
+          include-templates: true
+
+      - name: Confirmar versão do motor
+        run: godot --version
+
+      - name: Importar recursos no Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          godot --headless --editor --path . --quit 2>&1 | tee "$GITHUB_WORKSPACE/godot-import.log"
+
+      - name: Teste de arranque headless
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          godot --headless --path . --quit-after 5 2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Verificar preset Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          grep -Eq '^\[preset\.[0-9]+\]' export_presets.cfg
+          grep -Eq '^platform="Android"$' export_presets.cfg
+          grep -Eq '^name="Android"$' export_presets.cfg
+
+      - name: Exportar APK Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          mkdir -p build
+          godot --headless --path . --export-debug "Android" "build/$APK_NAME" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
+          test -s "build/$APK_NAME"
+          echo "APK_EXPORT_PASS=True"
+
+      - name: Publicar APK e relatórios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-v0.1.126-Android-PRE-FLIGHT
+          path: |
+            **/build/A-Ultima-Expedicao-v0.1.126-android.apk
+            godot-import.log
+            godot-startup.log
+            godot-export.log
+          if-no-files-found: warn
+          retention-days: 14
