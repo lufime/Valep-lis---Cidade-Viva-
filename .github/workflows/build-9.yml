@@ -71,14 +71,14 @@ jobs:
               esac
             done
             if [ -z "$selected" ]; then
-              printf '::error::O ZIP aprovado para a correção do personagem não foi encontrado. Candidatos: \\n'
-              printf ' - %s\\n' "${candidates[@]}"
+              printf '::error::O ZIP aprovado para a correção do personagem não foi encontrado. Candidatos: \n'
+              printf ' - %s\n' "${candidates[@]}"
               exit 1
             fi
 
             echo "A extrair o projeto selecionado explicitamente: $selected"
             unzip -q "$selected" -d "$RUNNER_TEMP/ultima-expedicao-project"
-            root="$(find "$RUNNER_TEMP/ultima-expedicao-project" -type f -name project.godot -printf '%h\\n' -quit || true)"
+            root="$(find "$RUNNER_TEMP/ultima-expedicao-project" -type f -name project.godot -printf '%h\n' -quit || true)"
           fi
 
           if [ -z "${root:-}" ] || [ ! -s "$root/project.godot" ]; then
