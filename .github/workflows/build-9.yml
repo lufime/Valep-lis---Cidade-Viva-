@@ -296,6 +296,22 @@ jobs:
           blender --version | head -3
           blender --background --factory-startup --python-expr "import bpy; print('BLENDER_BACKGROUND_PASS', bpy.app.version_string); bpy.ops.wm.quit_blender()"
 
+      - name: Isolar temporariamente o ficheiro Blender durante o build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # O GLB exportado já existe. Isolar o .blend permite testar o bloqueio sem apagar o original dos ZIPs.
+          source="$PROJECT_DIR/assets/station_corridor_kit.blend"
+          holding="$RUNNER_TEMP/station_corridor_kit.blend"
+          if [ -f "$source" ]; then
+            test -s "$PROJECT_DIR/assets/station_corridor_kit.glb"
+            mv "$source" "$holding"
+            echo "BLEND_TEMPORARILY_ISOLATED=True"
+            echo "GLB_FALLBACK_PRESENT=True"
+          else
+            echo "BLEND_TEMPORARILY_ISOLATED=False (ficheiro .blend não existe no projeto extraído)"
+          fi
+
       - name: Importar recursos no Godot e validar resultado
         shell: bash
         run: |
@@ -406,6 +422,20 @@ jobs:
           godot --headless --path . --export-debug "Android" "build/$APK_NAME" 2>&1 | tee "$GITHUB_WORKSPACE/godot-export.log"
           test -s "build/$APK_NAME"
           echo "APK_EXPORT_PASS=True"
+
+      - name: Restaurar ficheiro Blender original no projeto extraído
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="$PROJECT_DIR/assets/station_corridor_kit.blend"
+          holding="$RUNNER_TEMP/station_corridor_kit.blend"
+          if [ -f "$holding" ]; then
+            mv "$holding" "$source"
+            echo "BLEND_RESTORED=True"
+          else
+            echo "BLEND_RESTORED=False (não foi necessário mover ou o ficheiro já não existe)"
+          fi
 
       - name: Publicar APK e relatórios
         if: always()
