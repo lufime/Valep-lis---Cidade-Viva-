@@ -299,8 +299,26 @@ jobs:
           find . -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.blend' -o -iname '*.wav' -o -iname '*.png' \) -not -path './.godot/*' -printf '%s bytes %p\n' | sort -nr | head -40
           echo "Plugins de editor declarados no projeto:"
           grep -nE 'editor_plugins|\[editor_plugins\]|enabled=' project.godot || true
-          echo "Plugins encontrados:"
-          find addons -maxdepth 3 -type f \( -name 'plugin.cfg' -o -name '*.gd' \) -print 2>/dev/null | sort | head -100 || true
+          find addons -maxdepth 3 -name plugin.cfg -print 2>/dev/null | sort || true
+          # Isolar o primeiro import dos plugins de editor: estes são carregados
+          # durante --import e podem manter o editor ativo. Restaurar sempre o projeto original.
+          cp project.godot "$RUNNER_TEMP/project.godot.original"
+          restore_project_settings() { cp "$RUNNER_TEMP/project.godot.original" project.godot; }
+          trap restore_project_settings EXIT
+          python - project.godot <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+          pattern = r'(?ms)(^\[editor_plugins\]\s*\n).*?(?=^\[|\Z)'
+          m = re.search(pattern, s)
+          if m:
+              section = m.group(1) + 'enabled=PackedStringArray()\n'
+              s = s[:m.start()] + section + s[m.end():]
+              p.write_text(s, encoding="utf-8")
+              print("DIAGNÓSTICO: plugins de editor desativados temporariamente apenas durante a importação.")
+          else:
+              print("DIAGNÓSTICO: não existe secção [editor_plugins]; o projeto mantém-se inalterado.")
+          PY
           echo "Início do processo Godot: $(date -u +%FT%TZ)"
           godot --headless --verbose --path . --import > "$log" 2>&1 &
           godot_pid=$!
