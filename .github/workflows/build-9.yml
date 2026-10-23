@@ -278,33 +278,27 @@ jobs:
       - name: Confirmar versão do motor
         run: godot --version
 
-      - name: Importar recursos no Godot (com diagnóstico e limite)
+      - name: Restaurar cache de importação Godot
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ultima-expedicao-project/**/.godot
+          key: godot-import-v0.1.126-${{ runner.os }}-${{ env.GODOT_VERSION }}-${{ hashFiles('A-Ultima-Expedicao-v0.1.126-HUMANO-SEM-CABELO.zip', 'A-Ultima-Expedicao-v0.1.126-PROJETO-BASE.zip') }}
+          restore-keys: |
+            godot-import-v0.1.126-${{ runner.os }}-${{ env.GODOT_VERSION }}-
+
+      - name: Importar recursos no Godot (diagnóstico completo)
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           cd "$PROJECT_DIR"
           log="$GITHUB_WORKSPACE/godot-import.log"
           echo "Início da importação: $(date -u +%FT%TZ)"
           echo "Projeto: $PROJECT_DIR"
           echo "Godot: $(godot --version)"
-          echo "Recursos 3D e áudio que serão importados:"
+          echo "Recursos 3D e áudio mais pesados:"
           find . -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.blend' -o -iname '*.wav' -o -iname '*.png' \) -not -path './.godot/*' -printf '%s bytes %p\n' | sort -nr | head -40
-          set +e
-          timeout --signal=TERM --kill-after=30s 12m godot --headless --verbose --editor --path . --quit 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
+          godot --headless --verbose --editor --path . --quit 2>&1 | tee "$log"
           echo "Fim da importação: $(date -u +%FT%TZ)"
-          echo "GODOT_IMPORT_EXIT_CODE=$status"
-          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-            echo "::error::Importação excedeu 12 minutos; log e recurso em processamento ficam disponíveis para diagnóstico."
-            tail -n 250 "$log" || true
-            exit 1
-          fi
-          if [ "$status" -ne 0 ]; then
-            echo "::error::Godot terminou a importação com código $status."
-            tail -n 250 "$log" || true
-            exit "$status"
-          fi
           echo "PASS: processo de importação terminou."
 
       - name: Teste de arranque headless
