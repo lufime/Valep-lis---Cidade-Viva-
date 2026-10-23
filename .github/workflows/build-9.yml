@@ -295,6 +295,22 @@ jobs:
           echo "Início da importação: $(date -u +%FT%TZ)"
           echo "Projeto: $PROJECT_DIR"
           echo "Godot: $(godot --version)"
+          echo "Diagnóstico do importador Blender:"
+          if command -v blender >/dev/null 2>&1; then
+            echo "BLENDER_FOUND=$(command -v blender)"
+            blender --version | head -3 || true
+          else
+            echo "BLENDER_NOT_FOUND: Blender não está instalado no runner."
+          fi
+          echo "Tamanho e assinatura dos modelos 3D:"
+          for model in assets/station_corridor_kit.blend assets/station_corridor_kit.glb assets/humano_realista_v2.glb; do
+            if [ -f "$model" ]; then
+              stat -c '%n | %s bytes' "$model"
+              file "$model" || true
+            else
+              echo "AUSENTE: $model"
+            fi
+          done
           echo "Recursos-fonte por tipo:"
           for ext in glb gltf blend png wav ogg tscn tres res; do
             count=$(find . -type f -iname "*.$ext" -not -path './.godot/*' | wc -l)
@@ -306,8 +322,25 @@ jobs:
           set +e
           # Transmitir o registo em direto para o GitHub Actions; não esperar pelo fim para o mostrar.
           set -o pipefail
-          godot --headless --verbose --path . --import 2>&1 | tee "$log"
+          godot --headless --verbose --path . --import 2>&1 | tee "$log" &
+          godot_pid=$!
+          # Diagnóstico periódico sem alterar os recursos do projeto.
+          (
+            while kill -0 "$godot_pid" 2>/dev/null; do
+              sleep 30
+              kill -0 "$godot_pid" 2>/dev/null || break
+              echo "HEARTBEAT_IMPORT $(date -u +%FT%TZ)"
+              ps -o pid,ppid,stat,%cpu,%mem,etime,cmd -p "$godot_pid" || true
+              echo "Últimas linhas do registo Godot:"
+              tail -n 12 "$log" 2>/dev/null || true
+              echo "Índices Godot criados até agora:"
+              find .godot -maxdepth 3 -type f -printf '%p (%s bytes)\n' 2>/dev/null | head -30 || true
+            done
+          ) &
+          monitor_pid=$!
+          wait "$godot_pid"
           godot_status=$?
+          kill "$monitor_pid" 2>/dev/null || true
           set -e
           echo "Fim do processo Godot: $(date -u +%FT%TZ); exit=$godot_status"
           if [ "$godot_status" -ne 0 ]; then
