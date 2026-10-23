@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ultima-expedicao-v0126-android-${{ github.ref }}
+  group: ultima-expedicao-v0126-android-diagnostic-v2-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -322,7 +322,7 @@ jobs:
           set +e
           # Transmitir o registo em direto para o GitHub Actions; não esperar pelo fim para o mostrar.
           set -o pipefail
-          godot --headless --verbose --path . --import 2>&1 | tee "$log" &
+          timeout --signal=TERM --kill-after=20s 10m godot --headless --verbose --path . --import 2>&1 | tee "$log" &
           godot_pid=$!
           # Diagnóstico periódico sem alterar os recursos do projeto.
           (
@@ -343,6 +343,11 @@ jobs:
           kill "$monitor_pid" 2>/dev/null || true
           set -e
           echo "Fim do processo Godot: $(date -u +%FT%TZ); exit=$godot_status"
+          if [ "$godot_status" -eq 124 ] || [ "$godot_status" -eq 137 ]; then
+            echo "::error::IMPORT_TIMEOUT: Godot não concluiu a importação em 10 minutos. O registo e os heartbeats foram preservados para diagnóstico."
+            tail -n 100 "$log" || true
+            exit 1
+          fi
           if [ "$godot_status" -ne 0 ]; then
             echo "::error::Godot terminou com código $godot_status durante a importação."
             exit "$godot_status"
