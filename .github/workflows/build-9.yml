@@ -297,8 +297,32 @@ jobs:
           echo "Godot: $(godot --version)"
           echo "Recursos 3D e áudio mais pesados:"
           find . -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.blend' -o -iname '*.wav' -o -iname '*.png' \) -not -path './.godot/*' -printf '%s bytes %p\n' | sort -nr | head -40
-          godot --headless --verbose --path . --import 2>&1 | tee "$log"
-          echo "Fim da importação: $(date -u +%FT%TZ)"
+          echo "Plugins de editor declarados no projeto:"
+          grep -nE 'editor_plugins|\[editor_plugins\]|enabled=' project.godot || true
+          echo "Plugins encontrados:"
+          find addons -maxdepth 3 -type f \( -name 'plugin.cfg' -o -name '*.gd' \) -print 2>/dev/null | sort | head -100 || true
+          echo "Início do processo Godot: $(date -u +%FT%TZ)"
+          godot --headless --verbose --path . --import > "$log" 2>&1 &
+          godot_pid=$!
+          while kill -0 "$godot_pid" 2>/dev/null; do
+            sleep 20
+            if kill -0 "$godot_pid" 2>/dev/null; then
+              echo "DIAGNÓSTICO: Godot ainda ativo em $(date -u +%FT%TZ); PID=$godot_pid"
+              ps -o pid,ppid,stat,etime,%cpu,%mem,wchan:32,cmd -p "$godot_pid" || true
+              echo "Últimas linhas do registo Godot:"
+              tail -n 12 "$log" || true
+            fi
+          done
+          set +e
+          wait "$godot_pid"
+          godot_status=$?
+          set -e
+          cat "$log"
+          echo "Fim do processo Godot: $(date -u +%FT%TZ); exit=$godot_status"
+          if [ "$godot_status" -ne 0 ]; then
+            echo "::error::Godot terminou com código $godot_status."
+            exit "$godot_status"
+          fi
           echo "PASS: processo de importação terminou."
 
       - name: Teste de arranque headless
