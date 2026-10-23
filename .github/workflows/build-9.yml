@@ -402,7 +402,7 @@ jobs:
           godot --headless --path . --quit-after 5 2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
 
       - name: Preparar Android SDK
-        uses: android-actions/setup-android@v3.2.3
+        uses: android-actions/setup-android@v3.2.2
         with:
           packages: platform-tools
 
