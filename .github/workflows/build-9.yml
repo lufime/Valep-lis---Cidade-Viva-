@@ -304,10 +304,11 @@ jobs:
           # Usar o modo --import sem forçar a saída por contagem de frames.
           # O processo deve terminar por si; recolhem-se o código e o registo real.
           set +e
-          godot --headless --verbose --path . --import > "$log" 2>&1
+          # Transmitir o registo em direto para o GitHub Actions; não esperar pelo fim para o mostrar.
+          set -o pipefail
+          godot --headless --verbose --path . --import 2>&1 | tee "$log"
           godot_status=$?
           set -e
-          cat "$log"
           echo "Fim do processo Godot: $(date -u +%FT%TZ); exit=$godot_status"
           if [ "$godot_status" -ne 0 ]; then
             echo "::error::Godot terminou com código $godot_status durante a importação."
