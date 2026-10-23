@@ -120,6 +120,53 @@ jobs:
           print("PASS: removido o retorno antecipado que impedia a lógica de criação da criatura.")
           PY
 
+      - name: Repor apenas recursos ausentes do PROJETO-BASE
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$GITHUB_WORKSPACE/A-Ultima-Expedicao-v0.1.126-PROJETO-BASE.zip" "$PROJECT_DIR" "$GITHUB_WORKSPACE/zip-merge-report.txt" <<'PY'
+          import pathlib, shutil, sys, tempfile, zipfile
+          archive = pathlib.Path(sys.argv[1])
+          target = pathlib.Path(sys.argv[2]).resolve()
+          report_path = pathlib.Path(sys.argv[3])
+          if not archive.is_file():
+              raise SystemExit("FAIL: não foi encontrado o ZIP PROJETO-BASE para recuperar dependências ausentes.")
+          copied, kept = [], []
+          with tempfile.TemporaryDirectory(prefix="base-deps-") as temp:
+              temp_path = pathlib.Path(temp)
+              with zipfile.ZipFile(archive) as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"FAIL: ZIP PROJETO-BASE corrompido: {bad}")
+                  z.extractall(temp_path)
+              roots = [p.parent for p in temp_path.rglob("project.godot") if p.is_file()]
+              if len(roots) != 1:
+                  raise SystemExit(f"FAIL: esperado um project.godot no PROJETO-BASE; encontrados {len(roots)}.")
+              base_root = roots[0]
+              for source in base_root.rglob("*"):
+                  if not source.is_file():
+                      continue
+                  relative = source.relative_to(base_root)
+                  destination = target / relative
+                  if destination.exists():
+                      kept.append(relative.as_posix())
+                      continue
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
+                  copied.append(relative.as_posix())
+          report = [
+              "Merge de dependências: apenas ficheiros ausentes copiados do PROJETO-BASE.",
+              "Ficheiros existentes no HUMANO-SEM-CABELO foram preservados, sem sobrescrita.",
+              f"Copiados: {len(copied)}",
+              f"Preservados por já existirem: {len(kept)}",
+              "",
+              "Ficheiros copiados:",
+              *(f"- {p}" for p in copied),
+          ]
+          report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
+          print("\n".join(report))
+          PY
+
       - name: Auditar limite de 25 MiB por ficheiro
         shell: bash
         run: |
@@ -234,5 +281,6 @@ jobs:
             godot-import.log
             godot-startup.log
             godot-export.log
+            zip-merge-report.txt
           if-no-files-found: warn
           retention-days: 14
