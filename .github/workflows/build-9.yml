@@ -43,7 +43,7 @@ jobs:
             root="$GITHUB_WORKSPACE"
           else
             # Primeiro procura um projeto já extraído no repositório.
-            root="$(find . -type f -name project.godot -not -path './.git/*' -not -path './.godot/*' -printf '%h\\n' -quit || true)"
+            root="$(find . -type f -name project.godot -not -path './.git/*' -not -path './.godot/*' -printf '%h\n' -quit || true)"
           fi
 
           if [ -z "$root" ]; then
@@ -60,18 +60,18 @@ jobs:
             if [ "${#candidates[@]}" -eq 0 ]; then
               echo "::error::Não existe project.godot no repositório nem em nenhum ZIP da raiz. É necessário carregar o ZIP que contém o projeto Godot completo."
               echo "ZIPs encontrados na raiz:"
-              find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -printf '%f\\n' | sort || true
+              find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -printf '%f\n' | sort || true
               exit 1
             fi
             if [ "${#candidates[@]}" -gt 1 ]; then
-              printf '::error::Mais do que um ZIP contém project.godot; não vou escolher arbitrariamente:\\n'
-              printf ' - %s\\n' "${candidates[@]}"
+              printf '::error::Mais do que um ZIP contém project.godot; não vou escolher arbitrariamente:\n'
+              printf ' - %s\n' "${candidates[@]}"
               exit 1
             fi
 
             echo "A extrair o projeto confirmado em: ${candidates[0]}"
             unzip -q "${candidates[0]}" -d "$RUNNER_TEMP/ultima-expedicao-project"
-            root="$(find "$RUNNER_TEMP/ultima-expedicao-project" -type f -name project.godot -printf '%h\\n' -quit || true)"
+            root="$(find "$RUNNER_TEMP/ultima-expedicao-project" -type f -name project.godot -printf '%h\n' -quit || true)"
           fi
 
           if [ -z "${root:-}" ] || [ ! -s "$root/project.godot" ]; then
