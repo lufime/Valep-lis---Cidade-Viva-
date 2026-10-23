@@ -63,15 +63,22 @@ jobs:
               find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -printf '%f\n' | sort || true
               exit 1
             fi
-            if [ "${#candidates[@]}" -gt 1 ]; then
-              printf '::error::Mais do que um ZIP contém project.godot; não vou escolher arbitrariamente:\n'
-              printf ' - %s\n' "${candidates[@]}"
+            # Seleção explícita do ZIP de personagem humano auditado. Não escolher por ordem alfabética.
+            selected=""
+            for archive in "${candidates[@]}"; do
+              case "$(basename "$archive")" in
+                A-Ultima-Expedicao-v0.1.126-HUMANO-SEM-CABELO.zip) selected="$archive" ;;
+              esac
+            done
+            if [ -z "$selected" ]; then
+              printf '::error::O ZIP aprovado para a correção do personagem não foi encontrado. Candidatos: \\n'
+              printf ' - %s\\n' "${candidates[@]}"
               exit 1
             fi
 
-            echo "A extrair o projeto confirmado em: ${candidates[0]}"
-            unzip -q "${candidates[0]}" -d "$RUNNER_TEMP/ultima-expedicao-project"
-            root="$(find "$RUNNER_TEMP/ultima-expedicao-project" -type f -name project.godot -printf '%h\n' -quit || true)"
+            echo "A extrair o projeto selecionado explicitamente: $selected"
+            unzip -q "$selected" -d "$RUNNER_TEMP/ultima-expedicao-project"
+            root="$(find "$RUNNER_TEMP/ultima-expedicao-project" -type f -name project.godot -printf '%h\\n' -quit || true)"
           fi
 
           if [ -z "${root:-}" ] || [ ! -s "$root/project.godot" ]; then
@@ -81,6 +88,37 @@ jobs:
           root="$(realpath "$root")"
           echo "PROJECT_DIR=$root" >> "$GITHUB_ENV"
           echo "Projeto Godot encontrado em: $root"
+
+
+      - name: Corrigir retorno antecipado que desativava a criatura
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$PROJECT_DIR/scripts/expedition.gd" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
+          old = """func _activate_entity_reaction(outcome: String) -> void:
+          \t# V0.1.126 cleanup: a criatura foi removida do jogo. Mantém-se a assinatura
+          \t# para que decisões/RPC antigos não quebrem, mas não cria qualquer entidade.
+          \tentity_active = false
+          \tentity_presence = null
+          \treturn
+          \t# Código antigo preservado temporariamente abaixo para facilitar auditoria.
+          """
+          new = """func _activate_entity_reaction(outcome: String) -> void:
+          \t# A criatura permanece ativa sob controlo da IA; a aparição depende de eventos
+          \t# narrativos e decisões, não apenas da passagem do tempo.
+          """
+          if old not in text:
+              if "V0.1.126 cleanup: a criatura foi removida do jogo" not in text:
+                  print("A correção já não é necessária; bloco de desativação não encontrado.")
+                  sys.exit(0)
+              print("FAIL: foi encontrada uma variante inesperada do bloco de desativação.")
+              sys.exit(1)
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          print("PASS: removido o retorno antecipado que impedia a lógica de criação da criatura.")
+          PY
 
       - name: Auditar limite de 25 MiB por ficheiro
         shell: bash
