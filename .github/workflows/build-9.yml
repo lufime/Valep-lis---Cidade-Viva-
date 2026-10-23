@@ -52,7 +52,7 @@ jobs:
             mkdir -p "$RUNNER_TEMP/ultima-expedicao-project"
             candidates=()
             while IFS= read -r archive; do
-              if unzip -Z1 "$archive" 2>/dev/null | grep -Eq '(^|/)project\\.godot$'; then
+              if unzip -Z1 "$archive" 2>/dev/null | grep -Eq '(^|/)project\.godot$'; then
                 candidates+=("$archive")
               fi
             done < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name '*.zip' -print | sort)
