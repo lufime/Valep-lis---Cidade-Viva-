@@ -167,6 +167,49 @@ jobs:
           print("\n".join(report))
           PY
 
+      - name: Recuperar kit modular a partir de arquivos disponíveis
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$GITHUB_WORKSPACE" "$PROJECT_DIR" <<'PY'
+          import pathlib, sys, zipfile
+          workspace = pathlib.Path(sys.argv[1])
+          project = pathlib.Path(sys.argv[2])
+          required = ("assets/station_corridor_kit.blend", "assets/station_corridor_kit.glb")
+          missing = [p for p in required if not (project / p).is_file()]
+          if not missing:
+              print("PASS: kit modular já está presente.")
+              raise SystemExit(0)
+          candidates = sorted(workspace.glob("*.zip"))
+          restored = []
+          for archive in candidates:
+              try:
+                  with zipfile.ZipFile(archive) as z:
+                      members = {pathlib.PurePosixPath(n).name: n for n in z.namelist() if not n.endswith("/")}
+                      for rel in list(missing):
+                          name = pathlib.PurePosixPath(rel).name
+                          member = members.get(name)
+                          if member:
+                              destination = project / rel
+                              destination.parent.mkdir(parents=True, exist_ok=True)
+                              destination.write_bytes(z.read(member))
+                              restored.append(f"{rel} <- {archive.name}:{member}")
+                              missing.remove(rel)
+                  if not missing:
+                      break
+              except (OSError, zipfile.BadZipFile):
+                  continue
+          for item in restored:
+              print("RESTORED:", item)
+          if missing:
+              print("FAIL: kit modular não encontrado nos ZIPs presentes no repositório:")
+              for rel in missing:
+                  print(" -", rel)
+              print("O PRE-FLIGHT para aqui sem inventar ou substituir os modelos.")
+              raise SystemExit(1)
+          print("PASS: ambos os ficheiros do kit modular foram recuperados de arquivos do repositório.")
+          PY
+
       - name: Auditar limite de 25 MiB por ficheiro
         shell: bash
         run: |
