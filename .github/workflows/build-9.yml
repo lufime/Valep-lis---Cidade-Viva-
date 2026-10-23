@@ -297,7 +297,7 @@ jobs:
           echo "Godot: $(godot --version)"
           echo "Recursos 3D e áudio mais pesados:"
           find . -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.blend' -o -iname '*.wav' -o -iname '*.png' \) -not -path './.godot/*' -printf '%s bytes %p\n' | sort -nr | head -40
-          godot --headless --verbose --editor --path . --quit 2>&1 | tee "$log"
+          godot --headless --verbose --path . --import 2>&1 | tee "$log"
           echo "Fim da importação: $(date -u +%FT%TZ)"
           echo "PASS: processo de importação terminou."
 
