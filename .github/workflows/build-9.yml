@@ -286,6 +286,16 @@ jobs:
           restore-keys: |
             godot-import-v0.1.126-${{ runner.os }}-${{ env.GODOT_VERSION }}-
 
+      - name: Instalar Blender para importar ficheiros .blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y blender
+          command -v blender
+          blender --version | head -3
+          blender --background --factory-startup --python-expr "import bpy; print('BLENDER_BACKGROUND_PASS', bpy.app.version_string)" --quit
+
       - name: Importar recursos no Godot e validar resultado
         shell: bash
         run: |
