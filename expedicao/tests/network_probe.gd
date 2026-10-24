@@ -47,7 +47,7 @@ func _start_probe() -> void:
 		print("SERVER_READY | À escuta na porta UDP %d" % TEST_PORT)
 		_watch_initial_spawn()
 		_watch_server_replication()
-		create_timer(10.0).timeout.connect(_on_timeout)
+		create_timer(30.0).timeout.connect(_on_timeout)
 	elif mode == "client":
 		api.connected_to_server.connect(_on_connected_to_server)
 		api.connection_failed.connect(_on_connection_failed)
@@ -58,7 +58,7 @@ func _start_probe() -> void:
 			return
 		api.multiplayer_peer = client_peer
 		print("CLIENT_STARTED | A ligar ao servidor local")
-		create_timer(9.0).timeout.connect(_on_timeout)
+		create_timer(25.0).timeout.connect(_on_timeout)
 	else:
 		_fail("Modo desconhecido: %s" % mode)
 
@@ -219,8 +219,12 @@ func _watch_server_replication() -> void:
 								print("SERVER_BURST_RATE_LIMIT_PASS | O anfitrião rejeitou o segundo pacote enviado demasiado cedo")
 								print("SERVER_TELEPORT_REJECT_PASS | O anfitrião manteve a última posição válida após o pedido de teletransporte")
 								probe.rpc_id(int(peer_id), "teleport_reject_ack")
-								await create_timer(0.2).timeout
-								quit(0)
+								for wall_attempt in range(60):
+									await create_timer(0.1).timeout
+									if bool(probe.get("wall_probe_completed")):
+										quit(0)
+										return
+								_fail("O cliente não concluiu o teste de movimento falsificado através da porta.")
 								return
 						_fail("O anfitrião não recebeu nem aplicou o pedido de fecho da porta do cliente.")
 						return
