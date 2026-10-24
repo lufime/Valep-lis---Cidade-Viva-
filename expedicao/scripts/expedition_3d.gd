@@ -75,29 +75,43 @@ func _add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: floa
 	_remote_targets[peer_id] = state
 
 func _build_remote_avatar(avatar: Node3D) -> void:
+	# Prioriza o modelo humanoide glTF/GLB com malha e esqueleto real.
+	# Mantém o avatar procedural como fallback caso o asset não possa ser carregado.
+	var model_scene := load("res://assets/character.glb") as PackedScene
+	if model_scene != null:
+		var character := model_scene.instantiate() as Node3D
+		if character != null:
+			character.name = "CharacterModel"
+			character.scale = Vector3.ONE
+			avatar.add_child(character)
+			return
+
+	_build_remote_avatar_fallback(avatar)
+
+func _build_remote_avatar_fallback(avatar: Node3D) -> void:
 	# Modelo humanoide procedural de protótipo: cabeça, tronco, braços, pernas e botas.
 	# Mantém o avatar leve e sem dependências de assets externos.
 	var torso := CapsuleMesh.new()
 	torso.radius = 0.25
 	torso.height = 0.82
 	_make_remote_avatar_part(avatar, "Torso", torso, Vector3(0, 1.15, 0), REMOTE_PLAYER_COLOR)
-
+	
 	var head := SphereMesh.new()
 	head.radius = 0.19
 	head.height = 0.38
 	_make_remote_avatar_part(avatar, "Head", head, Vector3(0, 1.78, 0), Color("#d6a078"))
-
+	
 	var neck := CylinderMesh.new()
 	neck.top_radius = 0.105
 	neck.bottom_radius = 0.12
 	neck.height = 0.18
 	_make_remote_avatar_part(avatar, "Neck", neck, Vector3(0, 1.55, 0), Color("#bd8966"))
-
+	
 	var hair := SphereMesh.new()
 	hair.radius = 0.195
 	hair.height = 0.16
 	_make_remote_avatar_part(avatar, "Hair", hair, Vector3(0, 1.91, 0.015), Color("#30251f"))
-
+	
 	var left_eye := SphereMesh.new()
 	left_eye.radius = 0.027
 	left_eye.height = 0.04
@@ -110,7 +124,7 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 	nose.radius = 0.035
 	nose.height = 0.065
 	_make_remote_avatar_part(avatar, "Nose", nose, Vector3(0, 1.755, -0.185), Color("#c28d69"))
-
+	
 	var vest := BoxMesh.new()
 	vest.size = Vector3(0.43, 0.48, 0.29)
 	_make_remote_avatar_part(avatar, "UtilityVest", vest, Vector3(0, 1.22, -0.015), Color("#d18a3e"))
@@ -120,17 +134,17 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 	var belt := BoxMesh.new()
 	belt.size = Vector3(0.43, 0.09, 0.27)
 	_make_remote_avatar_part(avatar, "UtilityBelt", belt, Vector3(0, 0.91, 0), Color("#222b34"))
-
+	
 	var left_arm := CapsuleMesh.new()
 	left_arm.radius = 0.095
 	left_arm.height = 0.68
 	_make_remote_avatar_part(avatar, "ArmLeft", left_arm, Vector3(-0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, -0.12))
-
+	
 	var right_arm := CapsuleMesh.new()
 	right_arm.radius = 0.095
 	right_arm.height = 0.68
 	_make_remote_avatar_part(avatar, "ArmRight", right_arm, Vector3(0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, 0.12))
-
+	
 	var left_shoulder := SphereMesh.new()
 	left_shoulder.radius = 0.13
 	left_shoulder.height = 0.22
@@ -139,7 +153,7 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 	right_shoulder.radius = 0.13
 	right_shoulder.height = 0.22
 	_make_remote_avatar_part(avatar, "ShoulderRight", right_shoulder, Vector3(0.31, 1.39, 0), Color("#d18a3e"))
-
+	
 	var left_hand := SphereMesh.new()
 	left_hand.radius = 0.085
 	left_hand.height = 0.13
@@ -148,21 +162,22 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 	right_hand.radius = 0.085
 	right_hand.height = 0.13
 	_make_remote_avatar_part(avatar, "HandRight", right_hand, Vector3(0.37, 0.79, -0.01), Color("#c28d69"))
-
+	
 	var left_leg := CapsuleMesh.new()
 	left_leg.radius = 0.13
 	left_leg.height = 0.78
 	_make_remote_avatar_part(avatar, "LegLeft", left_leg, Vector3(-0.15, 0.48, 0), Color("#303d50"))
-
+	
 	var right_leg := CapsuleMesh.new()
 	right_leg.radius = 0.13
 	right_leg.height = 0.78
 	_make_remote_avatar_part(avatar, "LegRight", right_leg, Vector3(0.15, 0.48, 0), Color("#303d50"))
-
+	
 	var boot := BoxMesh.new()
 	boot.size = Vector3(0.23, 0.13, 0.34)
 	_make_remote_avatar_part(avatar, "BootLeft", boot, Vector3(-0.15, 0.09, -0.055), Color("#171c22"))
 	_make_remote_avatar_part(avatar, "BootRight", boot, Vector3(0.15, 0.09, -0.055), Color("#171c22"))
+	
 
 func _make_remote_avatar_part(
 	avatar: Node3D,

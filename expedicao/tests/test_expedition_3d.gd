@@ -437,15 +437,23 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var avatar := scene.get_node_or_null("RemotePlayer_42") as Node3D
 	_check(avatar != null, "Um jogador remoto cria uma representação visual")
 	if avatar != null:
-		_check(avatar.get_node_or_null("Head") is MeshInstance3D, "O avatar remoto tem cabeça modelada")
-		_check(avatar.get_node_or_null("Hair") is MeshInstance3D and avatar.get_node_or_null("Neck") is MeshInstance3D, "O avatar remoto tem cabelo e pescoço modelados")
-		_check(avatar.get_node_or_null("EyeLeft") is MeshInstance3D and avatar.get_node_or_null("EyeRight") is MeshInstance3D and avatar.get_node_or_null("Nose") is MeshInstance3D, "O rosto do avatar remoto tem olhos e nariz")
-		_check(avatar.get_node_or_null("UtilityVest") is MeshInstance3D and avatar.get_node_or_null("VestReflectiveBand") is MeshInstance3D and avatar.get_node_or_null("UtilityBelt") is MeshInstance3D, "O avatar remoto tem colete, faixa refletora e cinto")
-		_check(avatar.get_node_or_null("ShoulderLeft") is MeshInstance3D and avatar.get_node_or_null("ShoulderRight") is MeshInstance3D and avatar.get_node_or_null("HandLeft") is MeshInstance3D and avatar.get_node_or_null("HandRight") is MeshInstance3D, "O avatar remoto tem ombros e mãos modelados")
-		_check(avatar.get_node_or_null("Torso") is MeshInstance3D, "O avatar remoto tem tronco modelado")
-		_check(avatar.get_node_or_null("ArmLeft") is MeshInstance3D and avatar.get_node_or_null("ArmRight") is MeshInstance3D, "O avatar remoto tem os dois braços")
-		_check(avatar.get_node_or_null("LegLeft") is MeshInstance3D and avatar.get_node_or_null("LegRight") is MeshInstance3D, "O avatar remoto tem as duas pernas")
-		_check(avatar.get_node_or_null("BootLeft") is MeshInstance3D and avatar.get_node_or_null("BootRight") is MeshInstance3D, "O avatar remoto tem botas")
+		var character_model := avatar.get_node_or_null("CharacterModel") as Node3D
+		_check(character_model != null, "O avatar remoto carrega o modelo humanoide GLB")
+		if character_model != null:
+			var mesh_count := 0
+			var skeleton_count := 0
+			var stack: Array[Node] = [character_model]
+			while not stack.is_empty():
+				var current: Node = stack.pop_back()
+				if current is MeshInstance3D:
+					mesh_count += 1
+				if current is Skeleton3D:
+					skeleton_count += 1
+					_check((current as Skeleton3D).get_bone_count() >= 60, "O modelo humanoide inclui esqueleto articulado")
+				for child in current.get_children():
+					stack.append(child)
+			_check(mesh_count >= 3, "O modelo humanoide contém malhas 3D importadas")
+			_check(skeleton_count >= 1, "O modelo humanoide contém um esqueleto")
 		var initial_position := avatar.global_position
 		scene.call("_apply_remote_position", 42, Vector3(4, 0.1, 5), 1.0, 0.2)
 		_check((scene.get("_remote_targets") as Dictionary).has(42), "A posição recebida fica definida como destino de movimento")
