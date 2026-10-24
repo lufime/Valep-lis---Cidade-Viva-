@@ -56,6 +56,7 @@ func _run_tests() -> void:
 	await _test_connector_floor_support(scene, player)
 	await _test_player_navigation(scene, player)
 	await _test_outer_wall_collisions(player)
+	await _test_keyboard_movement(player)
 	await _test_main_menu()
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
@@ -121,6 +122,43 @@ func _test_wall_collision(
 	var moved_toward_wall: bool = final_value > start_value if toward_positive else final_value < start_value
 	var stayed_inside: bool = final_value < boundary if toward_positive else final_value > boundary
 	_check(moved_toward_wall and stayed_inside, "A colisão impede atravessar a " + wall_name)
+
+func _test_keyboard_movement(player: CharacterBody3D) -> void:
+	await _test_key_direction(player, KEY_W, "W", "z", false)
+	await _test_key_direction(player, KEY_S, "S", "z", true)
+	await _test_key_direction(player, KEY_A, "A", "x", false)
+	await _test_key_direction(player, KEY_D, "D", "x", true)
+
+func _test_key_direction(
+	player: CharacterBody3D,
+	key_code: Key,
+	key_name: String,
+	axis: String,
+	toward_positive: bool
+) -> void:
+	player.set_physics_process(false)
+	player.position = Vector3(0, 0.1, 0)
+	player.rotation = Vector3.ZERO
+	player.velocity = Vector3.ZERO
+	await physics_frame
+	player.set_physics_process(true)
+
+	var key_event := InputEventKey.new()
+	key_event.keycode = key_code
+	key_event.physical_keycode = key_code
+	key_event.pressed = true
+	Input.parse_input_event(key_event)
+	for step in range(12):
+		await physics_frame
+
+	key_event.pressed = false
+	Input.parse_input_event(key_event)
+	await physics_frame
+	player.set_physics_process(false)
+
+	var final_value: float = player.position.x if axis == "x" else player.position.z
+	var moved_in_expected_direction: bool = final_value > 0.25 if toward_positive else final_value < -0.25
+	_check(moved_in_expected_direction, "A tecla " + key_name + " move o jogador na direção esperada")
 
 func _test_main_menu() -> void:
 	var menu_scene := load("res://scenes/main.tscn") as PackedScene
