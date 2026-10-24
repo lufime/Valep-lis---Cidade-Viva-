@@ -24,3 +24,7 @@ Inclui uma cena inicial e um protótipo de interface para criar uma sala ENet ou
 - A criatura está presente em todas as partidas e é controlada exclusivamente pela IA.
 - O traidor é um jogador humano distinto e recebe objetivos secretos.
 - A introdução pública não revela a identidade do traidor nem a natureza da criatura.
+
+## Validação da cena 3D
+
+O PRE-FLIGHT testa o arranque do projeto e tenta abrir diretamente `res://scenes/expedition_3d.tscn` em modo headless. O resultado deste teste deve ser consultado no GitHub Actions antes de declarar a cena validada.
