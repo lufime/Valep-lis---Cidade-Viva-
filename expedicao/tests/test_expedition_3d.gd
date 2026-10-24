@@ -459,6 +459,14 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 		_check((scene.get("_remote_targets") as Dictionary).has(42), "A posição recebida fica definida como destino de movimento")
 		scene.call("_process", 0.05)
 		_check(avatar.global_position.distance_to(initial_position) > 0.1 and avatar.global_position.distance_to(Vector3(4, 0.1, 5)) > 0.1, "O avatar remoto aproxima-se do destino sem saltar diretamente")
+		var remote_skeletons := scene.get("_remote_skeletons") as Dictionary
+		var animated_skeleton := remote_skeletons.get(avatar.get_instance_id()) as Skeleton3D
+		_check(animated_skeleton != null, "O avatar remoto tem esqueleto associado ao sistema de animação")
+		if animated_skeleton != null:
+			var thigh_index := animated_skeleton.find_bone("thigh_l")
+			_check(thigh_index >= 0, "O esqueleto tem o osso da perna esquerda")
+			if thigh_index >= 0:
+				_check(absf(animated_skeleton.get_bone_pose_rotation(thigh_index).angle_to(Quaternion.IDENTITY)) > 0.001, "O ciclo de caminhada altera a pose da perna")
 		scene.call("_process", 1.0)
 		_check(avatar.global_position.distance_to(Vector3(4, 0.1, 5)) < 0.001, "O avatar remoto converge para a posição recebida")
 		_check(absf(avatar.rotation.y - 1.0) < 0.001, "A orientação recebida é interpolada até ao destino")

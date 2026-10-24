@@ -8,6 +8,8 @@ const PLAYER_SYNC_INTERVAL := 0.05
 var _local_player: CharacterBody3D
 var _remote_players: Dictionary = {}
 var _remote_targets: Dictionary = {}
+var _remote_skeletons: Dictionary = {}
+var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
 var _sync_elapsed := 0.0
 
@@ -18,8 +20,11 @@ func _process(delta: float) -> void:
 		if not is_instance_valid(remote_avatar):
 			continue
 		var target: Dictionary = _remote_targets[remote_id]
+		var previous_position := remote_avatar.global_position
 		remote_avatar.global_position = remote_avatar.global_position.lerp(target.position, blend)
 		remote_avatar.rotation.y = lerp_angle(remote_avatar.rotation.y, float(target.yaw), blend)
+		var moved_distance := previous_position.distance_to(remote_avatar.global_position)
+		_animate_remote_avatar(int(remote_id), remote_avatar, delta, moved_distance > 0.002)
 	if not is_instance_valid(_local_player):
 		return
 	_sync_elapsed += delta
@@ -84,9 +89,47 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 			character.name = "CharacterModel"
 			character.scale = Vector3.ONE
 			avatar.add_child(character)
+			var skeleton := _find_skeleton(character)
+			if skeleton != null:
+				_remote_skeletons[avatar.get_instance_id()] = skeleton
 			return
 
 	_build_remote_avatar_fallback(avatar)
+
+func _find_skeleton(node: Node) -> Skeleton3D:
+	if node is Skeleton3D:
+		return node as Skeleton3D
+	for child in node.get_children():
+		var found := _find_skeleton(child)
+		if found != null:
+			return found
+	return null
+
+func _animate_remote_avatar(remote_id: int, avatar: Node3D, delta: float, is_moving: bool) -> void:
+	var skeleton := _remote_skeletons.get(avatar.get_instance_id()) as Skeleton3D
+	if not is_instance_valid(skeleton):
+		return
+	var elapsed := float(_remote_anim_time.get(remote_id, 0.0)) + delta
+	_remote_anim_time[remote_id] = elapsed
+	var phase := elapsed * (10.0 if is_moving else 2.2)
+	var swing := sin(phase) * (0.42 if is_moving else 0.025)
+	var knee := maxf(0.0, sin(phase + 0.65)) * (0.5 if is_moving else 0.008)
+	var arm_swing := -swing * 0.72
+	_set_bone_rotation(skeleton, "thigh_l", swing)
+	_set_bone_rotation(skeleton, "thigh_r", -swing)
+	_set_bone_rotation(skeleton, "calf_l", knee)
+	_set_bone_rotation(skeleton, "calf_r", maxf(0.0, sin(phase + PI + 0.65)) * (0.5 if is_moving else 0.008))
+	_set_bone_rotation(skeleton, "upperarm_l", arm_swing)
+	_set_bone_rotation(skeleton, "upperarm_r", -arm_swing)
+	_set_bone_rotation(skeleton, "lowerarm_l", -0.12 if is_moving else 0.0)
+	_set_bone_rotation(skeleton, "lowerarm_r", -0.12 if is_moving else 0.0)
+	_set_bone_rotation(skeleton, "spine_01", sin(elapsed * 2.2) * 0.025)
+
+func _set_bone_rotation(skeleton: Skeleton3D, bone_name: String, angle: float) -> void:
+	var bone_index := skeleton.find_bone(bone_name)
+	if bone_index < 0:
+		return
+	skeleton.set_bone_pose_rotation(bone_index, Quaternion(Vector3.RIGHT, angle))
 
 func _build_remote_avatar_fallback(avatar: Node3D) -> void:
 	# Modelo humanoide procedural de protótipo: cabeça, tronco, braços, pernas e botas.
