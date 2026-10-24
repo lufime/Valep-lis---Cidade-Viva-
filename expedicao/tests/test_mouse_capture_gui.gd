@@ -22,7 +22,7 @@ func _run() -> void:
 	escape_event.keycode = KEY_ESCAPE
 	escape_event.physical_keycode = KEY_ESCAPE
 	escape_event.pressed = true
-	player.call("_unhandled_input", escape_event)
+	Input.parse_input_event(escape_event)
 	await process_frame
 	_check(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE,
 		"GUI_MOUSE_ESCAPE_RELEASE_PASS | ESC liberta o rato")
@@ -30,7 +30,7 @@ func _run() -> void:
 	var click_event := InputEventMouseButton.new()
 	click_event.button_index = MOUSE_BUTTON_LEFT
 	click_event.pressed = true
-	player.call("_unhandled_input", click_event)
+	Input.parse_input_event(click_event)
 	await process_frame
 	_check(Input.mouse_mode == Input.MOUSE_MODE_CAPTURED,
 		"GUI_MOUSE_CLICK_CAPTURE_PASS | Clique esquerdo recaptura o rato")
