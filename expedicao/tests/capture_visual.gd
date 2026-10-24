@@ -39,6 +39,23 @@ func _capture_scene() -> void:
 			showcase_character.scale = Vector3.ONE
 			showcase_character.rotation.y = PI
 			scene.add_child(showcase_character)
+			var animation_player := _find_animation_player(showcase_character)
+			if animation_player != null:
+				var idle_name := ""
+				for animation_name in animation_player.get_animation_list():
+					if String(animation_name).to_lower().contains("idle"):
+						idle_name = String(animation_name)
+						break
+				if not idle_name.is_empty():
+					var idle_animation := animation_player.get_animation(idle_name)
+					if idle_animation != null:
+						idle_animation.loop_mode = Animation.LOOP_LINEAR
+					animation_player.play(idle_name)
+					print("SHOWCASE_IDLE_PASS | %s" % idle_name)
+				else:
+					push_warning("SHOWCASE_IDLE_SKIP | Não existe clip idle no modelo")
+			else:
+				push_warning("SHOWCASE_IDLE_SKIP | AnimationPlayer não encontrado no modelo")
 			print("SHOWCASE_CHARACTER_PASS | Modelo humanoide adicionado à captura")
 
 	else:
@@ -64,3 +81,12 @@ func _capture_scene() -> void:
 		return
 	print("GRAPHICAL_CAPTURE_PASS | %dx%d | /tmp/expedition-showcase.png" % [image.get_width(), image.get_height()])
 	quit(0)
+
+func _find_animation_player(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node as AnimationPlayer
+	for child in node.get_children():
+		var found := _find_animation_player(child)
+		if found != null:
+			return found
+	return null
