@@ -53,8 +53,21 @@ func _run_tests() -> void:
 		Vector3(0, 0.1, 3.5), Vector3(0, 0, 0.1)
 	)
 
+	await _test_player_navigation(scene, player)
 	await _test_main_menu()
 	_finish()
+
+func _test_player_navigation(scene: Node3D, player: CharacterBody3D) -> void:
+	player.position = Vector3.ZERO
+	await physics_frame
+	var start_x: float = player.position.x
+	_walk_steps(player, Vector3(0.1, 0, 0), 8)
+	_check(player.position.x > start_x + 0.3, "O jogador consegue deslocar-se numa zona desimpedida")
+
+	player.position = Vector3(-3.8, 0.1, 3.5)
+	await physics_frame
+	_walk_steps(player, Vector3(-0.1, 0, 0), 20)
+	_check(player.position.x < -4.2 and player.position.x > -4.8, "A colisão da parede oeste impede o jogador de atravessar a parede")
 
 func _test_main_menu() -> void:
 	var menu_scene := load("res://scenes/main.tscn") as PackedScene
