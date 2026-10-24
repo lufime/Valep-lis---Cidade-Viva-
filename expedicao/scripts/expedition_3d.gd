@@ -98,18 +98,22 @@ func _add_box(label: String, pos: Vector3, size: Vector3, color: Color) -> void:
 	add_child(body)
 
 func _add_door(label: String, pos: Vector3, yaw: float) -> void:
-	# A Node3D pivot owns the door transform; physics is kept on a child body
-	# so the physics server cannot reset the pivot rotation.
+	# Hinge the door at one edge so the opened panel swings out of the walking line.
+	# The pivot is offset from the doorway centre; the child body is offset back
+	# so the closed panel remains centred in the opening.
+	var hinge_offset := Vector3(0.9, 0.0, 0.0).rotated(Vector3.UP, yaw)
 	var door := Node3D.new()
 	door.name = label
-	door.position = pos
+	door.position = pos + hinge_offset
 	door.rotation.y = yaw
 	door.set_meta("is_door", true)
 	door.set_meta("open", false)
 	door.set_meta("closed_yaw", yaw)
+	door.set_meta("doorway_center", pos)
 
 	var body := StaticBody3D.new()
 	body.name = "DoorCollider"
+	body.position = Vector3(-0.9, 0.0, 0.0)
 	body.set_meta("is_door", true)
 	body.set_meta("door_root", NodePath(".."))
 	var mesh_instance := MeshInstance3D.new()
