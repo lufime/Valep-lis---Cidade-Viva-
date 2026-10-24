@@ -1,7 +1,7 @@
 extends SceneTree
 
 const TEST_PORT: int = 24561
-const EXPECTED_CLIENT_POSITION := Vector3(2.0, 0.1, 3.0)
+const EXPECTED_CLIENT_POSITION := Vector3(0.0, 0.1, -3.2)
 
 var probe: Node
 var api: MultiplayerAPI
@@ -67,6 +67,13 @@ func _on_connected_to_server() -> void:
 		return
 	local_player.global_position = EXPECTED_CLIENT_POSITION
 	print("CLIENT_MOVED | Posição de teste enviada para replicação")
+	await create_timer(0.5).timeout
+	var test_door := expedition.get_node_or_null("DoorToNorth") as Node3D
+	if test_door == null:
+		_fail("A porta norte não existe no cliente.")
+		return
+	expedition.call("_request_door_toggle", test_door)
+	print("CLIENT_DOOR_REQUESTED | O cliente pediu a abertura da porta norte")
 
 func _watch_server_replication() -> void:
 	for attempt in range(80):
@@ -82,9 +89,16 @@ func _watch_server_replication() -> void:
 			var avatar := expedition.get_node_or_null("RemotePlayer_%d" % int(peer_id))
 			if position.distance_to(EXPECTED_CLIENT_POSITION) < 0.6 and avatar is Node3D:
 				print("SERVER_REPLICATION_PASS | Posição do cliente recebida e avatar remoto criado")
-				probe.rpc_id(int(peer_id), "replication_ack")
-				await create_timer(0.5).timeout
-				quit(0)
+				var test_door := expedition.get_node_or_null("DoorToNorth") as Node3D
+				for door_attempt in range(40):
+					await create_timer(0.1).timeout
+					if is_instance_valid(test_door) and bool(test_door.get_meta("open", false)):
+						print("SERVER_DOOR_REPLICATION_PASS | O anfitrião recebeu e aplicou a abertura pedida pelo cliente")
+						probe.rpc_id(int(peer_id), "replication_ack")
+						await create_timer(0.5).timeout
+						quit(0)
+						return
+				_fail("O anfitrião não recebeu a abertura da porta pedida pelo cliente.")
 				return
 	_fail("O anfitrião não recebeu a posição de teste nem criou o avatar remoto.")
 
