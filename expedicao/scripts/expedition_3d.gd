@@ -18,7 +18,6 @@ var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
 var _last_server_sync_msec: Dictionary = {}
 var _sync_elapsed := 0.0
-var _local_peer_id := 1
 
 func _process(delta: float) -> void:
 	var blend := 1.0 - exp(-12.0 * delta)
@@ -44,7 +43,7 @@ func _process(delta: float) -> void:
 	# get_unique_id() quando o peer ENet já não está ativo.
 	var peer_id := 1
 	if connection_active:
-		peer_id = _local_peer_id
+		peer_id = multiplayer.get_unique_id()
 	var state := {"position": _local_player.global_position, "yaw": _local_player.rotation.y, "pitch": float(_local_player.get("pitch"))}
 	_player_states[peer_id] = state
 	if not connection_active:
@@ -57,7 +56,6 @@ func _process(delta: float) -> void:
 func _register_with_host() -> void:
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
 		var p := multiplayer.get_unique_id()
-		_local_peer_id = p
 		_rpc_register_player.rpc_id(1, p, _local_player.global_position, _local_player.rotation.y, float(_local_player.get("pitch")))
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -500,3 +498,228 @@ func _is_movement_path_clear(previous_position: Vector3, new_position: Vector3) 
 	# depois da gravidade, e uma margem a tocar no chão bloquearia todo o movimento horizontal.
 	query.transform = Transform3D(Basis.IDENTITY, previous_position + Vector3(0.0, 0.92, 0.0))
 	query.motion = displacement
+	query.margin = 0.005
+	if is_instance_valid(_local_player):
+		query.exclude = [_local_player.get_rid()]
+	var space := world.direct_space_state
+	# Não aceitamos uma trajetória que comece dentro de uma parede/porta.
+	if not space.intersect_shape(query, 8).is_empty():
+		return false
+	var fractions := space.cast_motion(query)
+	if fractions.size() < 2:
+		return false
+	return float(fractions[0]) >= 0.999
+
+func _build_environment() -> void:
+	var environment := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = Sky.new()
+	var sky_material := ProceduralSkyMaterial.new()
+	sky_material.sky_top_color = Color("#101a2a")
+	sky_material.sky_horizon_color = Color("#35404a")
+	sky_material.ground_bottom_color = Color("#080b10")
+	sky_material.ground_horizon_color = Color("#20262d")
+	env.sky.sky_material = sky_material
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color("#858585")
+	env.ambient_light_energy = 0.32
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	environment.environment = env
+	add_child(environment)
+
+	var light := DirectionalLight3D.new()
+	light.rotation_degrees = Vector3(-38, -28, 0)
+	light.light_energy = 0.62
+	light.shadow_enabled = true
+	light.shadow_opacity = 0.55
+	light.shadow_blur = 1.0
+	add_child(light)
+
+	var fill := OmniLight3D.new()
+	fill.position = Vector3(0, 2.7, 0)
+	fill.light_color = Color("#ffffff")
+	fill.light_energy = 0.18
+	fill.omni_range = 12.0
+	add_child(fill)
+
+func _build_map() -> void:
+	# Central room, two side rooms and a rear corridor, connected by real door openings.
+	_add_box("CentralFloor", Vector3(0, -0.2, 0), Vector3(10, 0.4, 10), Color("#303740"))
+	_add_box("NorthRoomFloor", Vector3(0, -0.2, -12), Vector3(10, 0.4, 10), Color("#29343b"))
+	_add_box("EastRoomFloor", Vector3(12, -0.2, 0), Vector3(10, 0.4, 10), Color("#34333a"))
+	_add_box("SouthRoomFloor", Vector3(0, -0.2, 12), Vector3(10, 0.4, 10), Color("#2e353a"))
+
+	# Fill the 2 m gaps between the central room and each outer zone so
+	# players have continuous collision floor while crossing the doorways.
+	_add_box("NorthConnectorFloor", Vector3(0, -0.2, -6), Vector3(4.4, 0.4, 2), Color("#29343b"))
+	_add_box("EastConnectorFloor", Vector3(6, -0.2, 0), Vector3(2, 0.4, 4.4), Color("#34333a"))
+	_add_box("SouthConnectorFloor", Vector3(0, -0.2, 6), Vector3(4.4, 0.4, 2), Color("#2e353a"))
+
+	# Central room walls with openings at each connection.
+	_add_box("CentralWestWall", Vector3(-5, 1.5, 0), Vector3(0.3, 3, 10), Color("#505760"))
+	_add_box("CentralEastUpper", Vector3(5, 1.5, -3.6), Vector3(0.3, 3, 2.8), Color("#505760"))
+	_add_box("CentralEastLower", Vector3(5, 1.5, 3.6), Vector3(0.3, 3, 2.8), Color("#505760"))
+	_add_box("CentralNorthLeft", Vector3(-3.6, 1.5, -5), Vector3(2.8, 3, 0.3), Color("#505760"))
+	_add_box("CentralNorthRight", Vector3(3.6, 1.5, -5), Vector3(2.8, 3, 0.3), Color("#505760"))
+	_add_box("CentralSouthLeft", Vector3(-3.6, 1.5, 5), Vector3(2.8, 3, 0.3), Color("#505760"))
+	_add_box("CentralSouthRight", Vector3(3.6, 1.5, 5), Vector3(2.8, 3, 0.3), Color("#505760"))
+
+	# Outer walls for connected zones.
+	_add_box("NorthWest", Vector3(-5, 1.5, -12), Vector3(0.3, 3, 10), Color("#46515b"))
+	_add_box("NorthEast", Vector3(5, 1.5, -12), Vector3(0.3, 3, 10), Color("#46515b"))
+	_add_box("NorthBack", Vector3(0, 1.5, -17), Vector3(10, 3, 0.3), Color("#46515b"))
+	_add_box("EastTop", Vector3(12, 1.5, -5), Vector3(10, 3, 0.3), Color("#46515b"))
+	_add_box("EastBottom", Vector3(12, 1.5, 5), Vector3(10, 3, 0.3), Color("#46515b"))
+	_add_box("EastBack", Vector3(17, 1.5, 0), Vector3(0.3, 3, 10), Color("#46515b"))
+	_add_box("SouthWest", Vector3(-5, 1.5, 12), Vector3(0.3, 3, 10), Color("#46515b"))
+	_add_box("SouthEast", Vector3(5, 1.5, 12), Vector3(0.3, 3, 10), Color("#46515b"))
+	_add_box("SouthBack", Vector3(0, 1.5, 17), Vector3(10, 3, 0.3), Color("#46515b"))
+
+	_add_door("DoorToNorth", Vector3(0, 1.15, -5), 0.0)
+	_add_door("DoorToEast", Vector3(5, 1.15, 0), PI / 2.0)
+	_add_door("DoorToSouth", Vector3(0, 1.15, 5), 0.0)
+	_add_box("NorthConsole", Vector3(-2.7, 0.65, -13.5), Vector3(1.1, 1.3, 0.7), Color("#657d88"))
+	_add_box("EastCrate", Vector3(14.5, 0.55, 2.5), Vector3(1.2, 1.1, 1.2), Color("#75634d"))
+	_add_box("SouthTable", Vector3(1.8, 0.8, 13.5), Vector3(2.2, 1.6, 1.0), Color("#4c555d"))
+
+
+	# Molduras finas posicionadas fora do volume útil das passagens.
+	var frame_color := Color("#8da7b5")
+	var frame_dark := Color("#263744")
+	# Ligações norte/sul: vãos com 2,2 m, sem painéis fixos a atravessar a passagem.
+	for z_pos in [-5.0, 5.0]:
+		for x_pos in [-1.18, 1.18]:
+			_add_box("DoorFramePost_%s_%s" % [str(z_pos), str(x_pos)], Vector3(x_pos, 1.35, z_pos), Vector3(0.12, 2.7, 0.18), frame_color)
+		_add_box("DoorFrameHeader_%s" % str(z_pos), Vector3(0, 2.72, z_pos), Vector3(2.48, 0.12, 0.18), frame_color)
+		_add_box("DoorFrameThreshold_%s" % str(z_pos), Vector3(0, 0.025, z_pos), Vector3(2.2, 0.035, 0.30), frame_dark)
+	# Ligação este: moldura rodando 90 graus em torno do eixo vertical.
+	for z_pos in [-1.18, 1.18]:
+		_add_box("DoorFramePostEast_%s" % str(z_pos), Vector3(5.0, 1.35, z_pos), Vector3(0.18, 2.7, 0.12), frame_color)
+	_add_box("DoorFrameHeaderEast", Vector3(5.0, 2.72, 0), Vector3(0.18, 0.12, 2.48), frame_color)
+	_add_box("DoorFrameThresholdEast", Vector3(5.0, 0.025, 0), Vector3(0.30, 0.035, 2.2), frame_dark)
+
+	# Luzes de teto discretas; sem objetos luminosos a bloquear os vãos.
+	_add_detail_box("CeilingLightCentral", Vector3(0, 2.86, 0), Vector3(2.0, 0.045, 0.22), Color("#d6efff"), 0.12)
+	_add_detail_box("CeilingLightNorth", Vector3(0, 2.86, -12), Vector3(2.0, 0.045, 0.22), Color("#d6efff"), 0.12)
+	_add_detail_box("CeilingLightEast", Vector3(12, 2.86, 0), Vector3(0.22, 0.045, 2.0), Color("#d6efff"), 0.12)
+	_add_detail_box("CeilingLightSouth", Vector3(0, 2.86, 12), Vector3(2.0, 0.045, 0.22), Color("#d6efff"), 0.12)
+	_add_detail_box("NorthZoneSign", Vector3(0, 2.45, -4.72), Vector3(1.05, 0.18, 0.04), Color("#214c63"), 0.20)
+	_add_detail_box("EastZoneSign", Vector3(4.72, 2.45, 0), Vector3(0.04, 0.18, 1.05), Color("#214c63"), 0.20)
+	_add_detail_box("SouthZoneSign", Vector3(0, 2.45, 4.72), Vector3(1.05, 0.18, 0.04), Color("#214c63"), 0.20)
+
+	# Acabamentos de instalação: juntas no piso, rodapés técnicos e painéis de parede.
+	var floor_joint := Color("#46535d")
+	var wall_panel := Color("#657581")
+	var wall_shadow := Color("#394957")
+	for x_pos in [-3.0, -1.5, 1.5, 3.0]:
+		_add_detail_box("FloorJointX_%s" % str(x_pos), Vector3(x_pos, 0.008, 0), Vector3(0.018, 0.008, 9.4), floor_joint)
+	for z_pos in [-3.0, -1.5, 1.5, 3.0]:
+		_add_detail_box("FloorJointZ_%s" % str(z_pos), Vector3(0, 0.009, z_pos), Vector3(9.4, 0.008, 0.018), floor_joint)
+	# Painéis pouco profundos na parede oeste; não alteram colisões nem largura dos corredores.
+	for y_pos in [0.55, 1.1, 1.65, 2.2]:
+		_add_detail_box("WestWallPanel_%s" % str(y_pos), Vector3(-4.81, y_pos, 0), Vector3(0.025, 0.36, 8.8), wall_panel)
+	# Faixas técnicas nas paredes laterais, afastadas das aberturas das portas.
+	_add_detail_box("EastUpperWallBand", Vector3(4.81, 2.45, -3.55), Vector3(0.025, 0.10, 2.5), wall_shadow)
+	_add_detail_box("EastLowerWallBand", Vector3(4.81, 2.45, 3.55), Vector3(0.025, 0.10, 2.5), wall_shadow)
+	_add_detail_box("NorthLeftWallBand", Vector3(-3.55, 2.45, -4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("NorthRightWallBand", Vector3(3.55, 2.45, -4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("SouthLeftWallBand", Vector3(-3.55, 2.45, 4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("SouthRightWallBand", Vector3(3.55, 2.45, 4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+
+func _add_detail_box(label: String, pos: Vector3, size: Vector3, color: Color, emission: float = 0.0) -> void:
+	var detail := MeshInstance3D.new()
+	detail.name = label
+	detail.position = pos
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	detail.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.42
+	if emission > 0.0:
+		material.emission_enabled = true
+		material.emission = color
+		material.emission_energy_multiplier = emission
+	detail.material_override = material
+	add_child(detail)
+
+func _add_box(label: String, pos: Vector3, size: Vector3, color: Color) -> void:
+	var body := StaticBody3D.new()
+	body.name = label
+	body.position = pos
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	mesh_instance.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.82
+	mesh_instance.material_override = material
+	body.add_child(mesh_instance)
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	collision.shape = shape
+	body.add_child(collision)
+	add_child(body)
+
+func _add_door(label: String, pos: Vector3, yaw: float) -> void:
+	# Hinge the door at one edge so the opened panel swings out of the walking line.
+	# The pivot is offset from the doorway centre; the child body is offset back
+	# so the closed panel remains centred in the opening.
+	var hinge_offset := Vector3(0.9, 0.0, 0.0).rotated(Vector3.UP, yaw)
+	var door := Node3D.new()
+	door.name = label
+	door.position = pos + hinge_offset
+	door.rotation.y = yaw
+	door.set_meta("is_door", true)
+	door.set_meta("open", false)
+	door.set_meta("closed_yaw", yaw)
+	door.set_meta("doorway_center", pos)
+
+	var body := StaticBody3D.new()
+	body.name = "DoorCollider"
+	body.position = Vector3(-0.9, 0.0, 0.0)
+	body.set_meta("is_door", true)
+	body.set_meta("door_root", NodePath(".."))
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(1.8, 2.3, 0.16)
+	mesh_instance.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color("#6d8795")
+	material.metallic = 0.45
+	material.roughness = 0.38
+	mesh_instance.material_override = material
+	body.add_child(mesh_instance)
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(1.8, 2.3, 0.16)
+	collision.shape = shape
+	body.add_child(collision)
+	door.add_child(body)
+	add_child(door)
+
+func _build_hud() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "HUD"
+	add_child(layer)
+	var panel := PanelContainer.new()
+	panel.position = Vector2(18, 18)
+	panel.custom_minimum_size = Vector2(360, 0)
+	layer.add_child(panel)
+	var stack := VBoxContainer.new()
+	panel.add_child(stack)
+	var title := Label.new()
+	title.text = "A ÚLTIMA EXPEDIÇÃO | PROTÓTIPO 3D"
+	title.add_theme_font_size_override("font_size", 18)
+	stack.add_child(title)
+	var info := Label.new()
+	info.text = "WASD: mover  |  rato: olhar  |  E: abrir/fechar porta  |  ESC: libertar rato"
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stack.add_child(info)
+	var note := Label.new()
+	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Rede técnica (avatares/portas) em validação. Criatura IA: protótipo de patrulha/perseguição; ataque e objetivos de jogo ainda por implementar."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stack.add_child(note)
