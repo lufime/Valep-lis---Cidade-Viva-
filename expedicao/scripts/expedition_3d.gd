@@ -101,6 +101,12 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 				var walk_name := _find_animation_name(animation_player, "walk")
 				var idle_name := _find_animation_name(animation_player, "idle")
 				var run_name := _find_animation_name(animation_player, "run")
+				if run_name.is_empty():
+					run_name = _find_animation_name(animation_player, "jog")
+				if run_name.is_empty():
+					run_name = _find_animation_name(animation_player, "sprint")
+				if run_name.is_empty():
+					run_name = _find_animation_name(animation_player, "fast")
 				if not walk_name.is_empty() or not idle_name.is_empty() or not run_name.is_empty():
 					_remote_animation_players[avatar.get_instance_id()] = animation_player
 					_remote_animation_names[avatar.get_instance_id()] = {"walk": walk_name, "idle": idle_name, "run": run_name, "current": ""}

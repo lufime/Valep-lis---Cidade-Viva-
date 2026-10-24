@@ -213,8 +213,10 @@ func _test_animation_asset() -> void:
 			has_walk = has_walk or normalized.contains("walk")
 			has_idle = has_idle or normalized.contains("idle")
 		var has_run := false
+		print("ANIMATION_CLIPS | ", ", ".join(PackedStringArray(names)))
 		for animation_name in names:
-			has_run = has_run or String(animation_name).to_lower().contains("run")
+			var normalized_name := String(animation_name).to_lower()
+			has_run = has_run or normalized_name.contains("run") or normalized_name.contains("jog") or normalized_name.contains("sprint") or normalized_name.contains("fast")
 		_check(has_walk, "O GLB deve conter uma animação de caminhada")
 		_check(has_idle, "O GLB deve conter uma animação de repouso")
 		_check(has_run, "O GLB deve conter uma animação de corrida")
@@ -511,7 +513,7 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 1.5)
 			_check(animation_player.current_animation.to_lower().contains("walk"), "O avatar remoto muda para caminhada em movimento normal")
 			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 5.0)
-			_check(animation_player.current_animation.to_lower().contains("run"), "O avatar remoto muda para corrida quando se desloca depressa")
+			_check((animation_player.current_animation.to_lower().contains("run") or animation_player.current_animation.to_lower().contains("jog") or animation_player.current_animation.to_lower().contains("sprint") or animation_player.current_animation.to_lower().contains("fast")), "O avatar remoto muda para corrida quando se desloca depressa")
 			_check(animation_player.is_playing(), "A animação de corrida permanece ativa após a transição")
 			_check(animation_names.has(avatar.get_instance_id()), "O estado de animação é guardado por avatar remoto")
 		var initial_position := avatar.global_position
