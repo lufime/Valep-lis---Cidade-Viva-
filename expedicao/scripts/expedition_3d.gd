@@ -440,6 +440,7 @@ func _ready() -> void:
 	_local_player = player
 	_player_states[multiplayer.get_unique_id()] = {"position": player.position, "yaw": player.rotation.y, "pitch": 0.0}
 	_build_hud()
+	_build_creature()
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not multiplayer.is_server():
 		call_deferred("_register_with_host")
 
