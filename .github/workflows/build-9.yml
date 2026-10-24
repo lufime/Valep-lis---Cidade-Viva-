@@ -120,6 +120,25 @@ jobs:
           print("PASS: removido o retorno antecipado que impedia a lógica de criação da criatura.")
           PY
 
+      - name: Corrigir bloco else vazio do recurso decorativo opcional
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$PROJECT_DIR/scripts/expedition.gd" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          old = "\telse:\n\t\t# Recurso decorativo opcional: o cenário base continua funcional sem este GLB.\n\tvar pipe_mat :="
+          new = "\telse:\n\t\t# Recurso decorativo opcional: o cenário base continua funcional sem este GLB.\n\t\tpass\n\tvar pipe_mat :="
+          if old in source:
+              path.write_text(source.replace(old, new, 1), encoding="utf-8")
+              print("PASS: bloco else opcional agora tem pass; não altera a lógica quando o GLB existe.")
+          elif new in source:
+              print("PASS: correção do bloco else já aplicada.")
+          else:
+              raise SystemExit("FAIL: o bloco else não corresponde ao contexto auditado; nenhuma alteração automática aplicada.")
+          PY
+
       - name: Repor apenas recursos ausentes do PROJETO-BASE
         shell: bash
         run: |
