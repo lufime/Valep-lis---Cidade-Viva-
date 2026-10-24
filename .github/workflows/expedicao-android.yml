@@ -33,14 +33,18 @@ jobs:
 
       - name: Instalar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools, platforms;android-35, build-tools;35.0.0"
 
       - name: Instalar componentes Android
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          echo "ANDROID_HOME=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" >> "$GITHUB_ENV"
+          sdk_path="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk_path"
+          "$sdk_path/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0" || sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$sdk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk_path" >> "$GITHUB_ENV"
 
       - name: Instalar Godot 4.5 e modelos oficiais de exportação
         shell: bash
