@@ -21,6 +21,9 @@ func _run_tests() -> void:
 
 	_test_environment_lighting(scene)
 	_test_hud_status(scene)
+	_check(scene.has_node("CreatureAI"), "A criatura controlada pela IA deve existir em todas as expedições")
+	var creature := scene.get_node_or_null("CreatureAI") as CharacterBody3D
+	_check(creature != null and creature.get_script() != null, "A criatura deve ter um controlador de IA")
 
 	var player := scene.get_node_or_null("LocalPlayer") as CharacterBody3D
 	_check(player != null, "A cena deve criar o jogador local")
