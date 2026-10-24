@@ -67,6 +67,7 @@ func _run_tests() -> void:
 	await _test_main_menu()
 	await _test_multiplayer_replication_helpers(scene)
 	_test_movement_validation(scene)
+	_test_rpc_authority(scene)
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
 	_finish()
@@ -481,6 +482,15 @@ func _finish() -> void:
 	else:
 		push_error(summary + " RESULTADO=FAIL")
 		quit(1)
+
+func _test_rpc_authority(scene: Node3D) -> void:
+	var rpc_config: Dictionary = scene.get_rpc_config()
+	var submit_config: Dictionary = rpc_config.get("_rpc_submit_player_state", {})
+	var sync_config: Dictionary = rpc_config.get("_rpc_sync_player", {})
+	_check(not submit_config.is_empty(), "A submissão de movimento tem configuração RPC")
+	_check(int(submit_config.get("rpc_mode", -1)) == MultiplayerAPI.RPC_MODE_ANY_PEER, "A submissão de movimento aceita pedidos de clientes para validação no anfitrião")
+	_check(not sync_config.is_empty(), "A replicação de movimento tem configuração RPC")
+	_check(int(sync_config.get("rpc_mode", -1)) == MultiplayerAPI.RPC_MODE_AUTHORITY, "A replicação de movimento só aceita o anfitrião como autoridade")
 
 func _test_movement_validation(scene: Node3D) -> void:
 	var start := Vector3.ZERO
