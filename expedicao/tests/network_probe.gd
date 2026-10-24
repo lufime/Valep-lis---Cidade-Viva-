@@ -3,6 +3,7 @@ extends SceneTree
 const TEST_PORT: int = 24561
 
 var probe: Node
+var api: MultiplayerAPI
 
 func _initialize() -> void:
 	call_deferred("_start_probe")
@@ -14,6 +15,8 @@ func _start_probe() -> void:
 		return
 
 	var mode: String = args[0]
+	api = MultiplayerAPI.create_default_interface()
+	set_multiplayer(api, root.get_path())
 	probe = Node.new()
 	probe.name = "Probe"
 	probe.set_script(load("res://tests/network_probe_node.gd"))
@@ -25,18 +28,18 @@ func _start_probe() -> void:
 		if server_error != OK:
 			_fail("O servidor ENet não arrancou: %s" % server_error)
 			return
-		multiplayer.multiplayer_peer = server_peer
+		api.multiplayer_peer = server_peer
 		print("SERVER_READY | À escuta na porta UDP %d" % TEST_PORT)
 		create_timer(12.0).timeout.connect(_on_timeout)
 	elif mode == "client":
-		multiplayer.connected_to_server.connect(_on_connected_to_server)
-		multiplayer.connection_failed.connect(_on_connection_failed)
+		api.connected_to_server.connect(_on_connected_to_server)
+		api.connection_failed.connect(_on_connection_failed)
 		var client_peer := ENetMultiplayerPeer.new()
 		var client_error: Error = client_peer.create_client("127.0.0.1", TEST_PORT)
 		if client_error != OK:
 			_fail("O cliente ENet não arrancou: %s" % client_error)
 			return
-		multiplayer.multiplayer_peer = client_peer
+		api.multiplayer_peer = client_peer
 		print("CLIENT_STARTED | A ligar ao servidor local")
 		create_timer(10.0).timeout.connect(_on_timeout)
 	else:
