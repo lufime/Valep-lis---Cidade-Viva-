@@ -87,6 +87,14 @@ func _test_creature_ai(scene: Node3D, creature: CharacterBody3D, player: Charact
 	await physics_frame
 	var near_state := String(creature.get("state"))
 	_check(near_state == "chase" or near_state == "attack", "A criatura deve detetar o jogador dentro do raio de proximidade")
+	if near_state == "chase":
+		var chase_velocity := creature.velocity
+		_check(Vector2(chase_velocity.x, chase_velocity.z).length() > 0.1, "A criatura desloca-se fisicamente na direção do jogador durante a perseguição")
+		var distance_before := creature.global_position.distance_to(player.global_position)
+		for frame_index in range(8):
+			await physics_frame
+		var distance_after := creature.global_position.distance_to(player.global_position)
+		_check(distance_after < distance_before, "A distância à vítima diminui durante a perseguição da IA")
 	player.global_position = creature.global_position + Vector3(0.0, 0.0, 0.5)
 	await physics_frame
 	_check(String(creature.get("state")) == "attack", "A IA deve entrar no estado de ataque quando o jogador está à distância de ataque")
