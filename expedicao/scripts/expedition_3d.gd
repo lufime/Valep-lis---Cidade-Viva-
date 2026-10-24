@@ -421,6 +421,13 @@ func _apply_door_state(door_name: String, is_open: bool) -> void:
 		else:
 			_local_player.call("_update_door_prompt")
 
+func _build_creature() -> void:
+	# A criatura é criada em todas as expedições e não é controlada por um jogador.
+	var creature := CharacterBody3D.new()
+	creature.set_script(load("res://scripts/creature_ai.gd"))
+	creature.name = "CreatureAI"
+	add_child(creature)
+
 func _ready() -> void:
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	_build_environment()
