@@ -160,3 +160,15 @@ jobs:
           grep -q "CLIENT_REMOTE_PLAYER_PASS" "$client_log"
           grep -q "SERVER_DOOR_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_DOOR_REPLICATION_PASS" "$client_log"
+
+      - name: Repetir testes funcionais em ciclo de estabilidade
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          for iteration in 1 2 3; do
+            echo "STABILITY_LOOP_START | round=$iteration/3"
+            timeout --signal=TERM --kill-after=5s 60s \
+              "$godot_bin" --headless --path expedicao --script res://tests/test_expedition_3d.gd
+            echo "STABILITY_LOOP_PASS | round=$iteration/3"
+          done
