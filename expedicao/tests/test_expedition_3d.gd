@@ -509,6 +509,8 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 		var animation_player := animation_players.get(avatar.get_instance_id()) as AnimationPlayer
 		if animation_player != null:
 			var locomotion_names: Dictionary = animation_names.get(avatar.get_instance_id(), {})
+			var selected_idle := String(locomotion_names.get("idle", ""))
+			_check(selected_idle.to_lower() == "idle", "O avatar remoto prefere o clip Idle de pé em vez de Crouch_Idle")
 			for movement_type in ["idle", "walk", "run"]:
 				var clip_name := String(locomotion_names.get(movement_type, ""))
 				if not clip_name.is_empty():

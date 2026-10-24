@@ -42,10 +42,16 @@ func _capture_scene() -> void:
 			var animation_player := _find_animation_player(showcase_character)
 			if animation_player != null:
 				var idle_name := ""
+				var fallback_idle_name := ""
 				for animation_name in animation_player.get_animation_list():
-					if String(animation_name).to_lower().contains("idle"):
+					var normalized_name := String(animation_name).to_lower()
+					if normalized_name == "idle":
 						idle_name = String(animation_name)
 						break
+					if fallback_idle_name.is_empty() and normalized_name.contains("idle") and not normalized_name.contains("crouch") and not normalized_name.contains("sitting") and not normalized_name.contains("swim"):
+						fallback_idle_name = String(animation_name)
+				if idle_name.is_empty():
+					idle_name = fallback_idle_name
 				if not idle_name.is_empty():
 					var idle_animation := animation_player.get_animation(idle_name)
 					if idle_animation != null:

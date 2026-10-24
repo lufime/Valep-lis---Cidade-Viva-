@@ -133,10 +133,16 @@ func _find_animation_player(node: Node) -> AnimationPlayer:
 	return null
 
 func _find_animation_name(animation_player: AnimationPlayer, keyword: String) -> String:
+	var fallback_name := ""
 	for animation_name in animation_player.get_animation_list():
-		if String(animation_name).to_lower().contains(keyword):
+		var normalized_name := String(animation_name).to_lower()
+		if normalized_name == keyword.to_lower():
 			return String(animation_name)
-	return ""
+		if fallback_name.is_empty() and normalized_name.contains(keyword.to_lower()):
+			# Do not select crouched/sitting/swimming clips as the generic idle pose.
+			if keyword.to_lower() != "idle" or (not normalized_name.contains("crouch") and not normalized_name.contains("sitting") and not normalized_name.contains("swim")):
+				fallback_name = String(animation_name)
+	return fallback_name
 
 func _find_skeleton(node: Node) -> Skeleton3D:
 	if node is Skeleton3D:
