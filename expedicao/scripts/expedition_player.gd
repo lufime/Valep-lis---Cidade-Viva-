@@ -90,10 +90,16 @@ func _update_door_prompt() -> void:
 	var hit := space.intersect_ray(query)
 	if not hit.is_empty():
 		var collider: Object = hit.get("collider")
-		if collider is Node3D and collider.has_meta("is_door"):
-			nearby_door = collider
-			prompt.text = "[E] Abrir porta" if not bool(collider.get_meta("open")) else "[E] Fechar porta"
-			return
+		if collider is Node3D:
+			var door_root: Node3D = collider
+			if collider.has_meta("door_root") and collider is Node:
+				var parent := collider.get_parent()
+				if parent is Node3D and parent.has_meta("is_door"):
+					door_root = parent
+			if door_root.has_meta("is_door"):
+				nearby_door = door_root
+				prompt.text = "[E] Abrir porta" if not bool(door_root.get_meta("open")) else "[E] Fechar porta"
+				return
 	prompt.text = "Explora a instalação"
 
 func _interact() -> void:
@@ -104,10 +110,9 @@ func _interact() -> void:
 	if not nearby_door.has_meta("closed_yaw"):
 		nearby_door.set_meta("closed_yaw", closed_yaw)
 	var next_open := not is_open
-	nearby_door.set_meta("open", next_open)
-	# Aplicar a rotação a partir do ângulo fechado guardado, sem acumular erro.
 	var target_rotation := nearby_door.rotation
 	target_rotation.y = closed_yaw + (PI / 2.0 if next_open else 0.0)
-	nearby_door.set_rotation(target_rotation)
+	nearby_door.rotation = target_rotation
+	nearby_door.set_meta("open", next_open)
 	nearby_door.set_meta("current_yaw", target_rotation.y)
 	prompt.text = "[E] Fechar porta" if next_open else "[E] Abrir porta"
