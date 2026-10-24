@@ -71,6 +71,15 @@ func _test_connector_floor_support(scene: Node3D, player: CharacterBody3D) -> vo
 		var hit := _raycast(scene, player, point, point + Vector3(0, -2, 0))
 		_check(not hit.is_empty(), "A ligação " + str(connector["name"]) + " tem chão contínuo sob a passagem")
 
+		player.position = Vector3(point.x, 2.0, point.z)
+		player.velocity = Vector3.ZERO
+		var physics_delta: float = 1.0 / float(Engine.physics_ticks_per_second)
+		for step in range(60):
+			await physics_frame
+			player.velocity.y -= 18.0 * physics_delta
+			player.move_and_slide()
+		_check(player.is_on_floor() and player.position.y > -0.25, "O jogador mantém apoio físico no corredor " + str(connector["name"]))
+
 func _test_player_navigation(scene: Node3D, player: CharacterBody3D) -> void:
 	player.position = Vector3.ZERO
 	await physics_frame
