@@ -8,6 +8,7 @@ on:
     paths:
       - "expedicao/**"
       - ".github/workflows/expedicao-preflight.yml"
+      - ".github/workflows/build-9.yml"
 
 permissions:
   contents: read
