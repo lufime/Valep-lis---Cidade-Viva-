@@ -56,3 +56,10 @@ jobs:
           set -euo pipefail
           /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
             --headless --path expedicao res://scenes/expedition_3d.tscn --quit-after 5
+
+      - name: Testes funcionais da cena 3D e das portas
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
+            --headless --path expedicao --script res://tests/test_expedition_3d.gd
