@@ -9,6 +9,7 @@ const EXPECTED_HOST_PITCH := 0.22
 var probe: Node
 var api: MultiplayerAPI
 var expedition: Node3D
+var disconnected_peer_id: int = 0
 
 func _initialize() -> void:
 	call_deferred("_start_probe")
@@ -33,6 +34,7 @@ func _start_probe() -> void:
 			_fail("O servidor ENet não arrancou: %s" % server_error)
 			return
 		api.multiplayer_peer = server_peer
+		api.peer_disconnected.connect(_on_probe_peer_disconnected)
 		_create_expedition()
 		var host_player := expedition.get_node_or_null("LocalPlayer") as CharacterBody3D
 		if host_player == null:
@@ -45,8 +47,9 @@ func _start_probe() -> void:
 		var host_states: Dictionary = expedition.get("_player_states")
 		host_states[api.get_unique_id()] = {"position": EXPECTED_HOST_POSITION, "yaw": EXPECTED_HOST_YAW, "pitch": EXPECTED_HOST_PITCH}
 		print("SERVER_READY | À escuta na porta UDP %d" % TEST_PORT)
+		_watch_initial_spawn()
 		_watch_server_replication()
-		create_timer(10.0).timeout.connect(_on_timeout)
+		create_timer(30.0).timeout.connect(_on_timeout)
 	elif mode == "client":
 		api.connected_to_server.connect(_on_connected_to_server)
 		api.connection_failed.connect(_on_connection_failed)
@@ -57,7 +60,7 @@ func _start_probe() -> void:
 			return
 		api.multiplayer_peer = client_peer
 		print("CLIENT_STARTED | A ligar ao servidor local")
-		create_timer(9.0).timeout.connect(_on_timeout)
+		create_timer(25.0).timeout.connect(_on_timeout)
 	else:
 		_fail("Modo desconhecido: %s" % mode)
 
@@ -73,13 +76,30 @@ func _on_connected_to_server() -> void:
 	print("CLIENT_CONNECTED | Ligação estabelecida; a enviar RPC PING")
 	probe.rpc_id(1, "ping")
 	_create_expedition()
-	await create_timer(0.5).timeout
 	var local_player := expedition.get_node_or_null("LocalPlayer") as CharacterBody3D
 	if local_player == null:
 		_fail("O jogador local não foi criado no cliente.")
 		return
-	local_player.global_position = EXPECTED_CLIENT_POSITION
-	print("CLIENT_MOVED | Posição de teste enviada para replicação")
+	# Tenta registar uma posição inicial falsificada; o anfitrião deve impor o spawn.
+	local_player.global_position = Vector3(40.0, 0.1, 40.0)
+	print("CLIENT_INITIAL_POSITION_SPOOF_SENT | A posição declarada no registo é deliberadamente impossível")
+	await create_timer(0.5).timeout
+	local_player.global_position = Vector3(0.0, 0.1, 0.0)
+	var spoof_door := expedition.get_node_or_null("DoorToNorth") as Node3D
+	if spoof_door == null:
+		_fail("A porta norte não existe para o teste de falsificação de posição.")
+		return
+	# Tenta declarar uma posição junto à porta e abri-la sem percorrer o trajeto.
+	expedition.rpc_id(1, "_rpc_submit_player_state", api.get_unique_id(), Vector3(0.0, 0.1, -3.2), 0.0, 0.0)
+	expedition.rpc_id(1, "_rpc_request_door_toggle", "DoorToNorth", true)
+	probe.rpc_id(1, "door_spoof_attempted")
+	await create_timer(0.3).timeout
+	if bool(spoof_door.get_meta("open", false)):
+		_fail("O anfitrião aceitou posição falsificada para abrir a porta norte.")
+		return
+	print("CLIENT_DOOR_SPOOF_GUARD_PASS | A porta continua fechada após a tentativa de falsificação")
+	await _move_player_gradually(local_player, EXPECTED_CLIENT_POSITION)
+	print("CLIENT_MOVED | Posição de teste enviada gradualmente para replicação")
 	var remote_host: Node3D
 	for attempt in range(20):
 		await create_timer(0.1).timeout
@@ -118,18 +138,51 @@ func _on_connected_to_server() -> void:
 	if local_player == null:
 		_fail("O jogador local do cliente não existe para o teste de autorização da porta.")
 		return
-	local_player.global_position = Vector3(20.0, 0.1, 20.0)
-	await create_timer(0.45).timeout
+	await _move_player_gradually(local_player, Vector3(0.0, 0.1, 0.0))
+	await create_timer(0.15).timeout
 	expedition.call("_request_door_toggle", test_door)
 	await create_timer(0.45).timeout
 	if bool(test_door.get_meta("open", false)):
 		_fail("O anfitrião aceitou indevidamente a abertura de porta pedida por um cliente distante.")
 		return
 	print("CLIENT_DOOR_DISTANCE_GUARD_PASS | Pedido de cliente distante rejeitado")
-	local_player.global_position = EXPECTED_CLIENT_POSITION
-	await create_timer(0.45).timeout
+
+	await _move_player_gradually(local_player, EXPECTED_CLIENT_POSITION)
+	await create_timer(0.15).timeout
 	expedition.call("_request_door_toggle", test_door)
 	print("CLIENT_DOOR_REQUESTED | O cliente próximo pediu a abertura da porta norte")
+
+func _move_player_gradually(player: CharacterBody3D, target: Vector3) -> void:
+	# Respeita o limite de deslocação validado pelo anfitrião em cada pacote de rede.
+	# A física mantém a altura do CharacterBody3D no chão; só interpolamos X/Z.
+	var horizontal_delta := Vector2(target.x - player.global_position.x, target.z - player.global_position.z)
+	while horizontal_delta.length() > 0.02:
+		var step_distance := minf(0.15, horizontal_delta.length())
+		var horizontal_step := Vector3(horizontal_delta.x, 0.0, horizontal_delta.y).normalized() * step_distance
+		player.global_position += horizontal_step
+		await create_timer(0.05).timeout
+		horizontal_delta = Vector2(target.x - player.global_position.x, target.z - player.global_position.z)
+	await create_timer(0.1).timeout
+
+func _watch_initial_spawn() -> void:
+	for attempt in range(50):
+		await create_timer(0.05).timeout
+		if not is_instance_valid(expedition):
+			return
+		var states: Dictionary = expedition.get("_player_states")
+		for peer_id in api.get_peers():
+			if not states.has(peer_id):
+				continue
+			var state: Dictionary = states[peer_id]
+			var position: Vector3 = state.position
+			# A gravidade pode assentar o jogador de y=0.1 para y=0.0;
+			# o teste de spawn deve detetar teleporte horizontal, não essa descida normal.
+			if Vector2(position.x, position.z).length() > 0.05 or position.y < -0.1 or position.y > 0.2:
+				_fail("O anfitrião aceitou a posição inicial falsificada do cliente: %s" % position)
+				return
+		print("SERVER_INITIAL_SPAWN_PASS | O anfitrião impôs a posição inicial de spawn")
+		return
+	_fail("O anfitrião não registou o jogador remoto no spawn esperado.")
 
 func _watch_server_replication() -> void:
 	for attempt in range(80):
@@ -156,14 +209,51 @@ func _watch_server_replication() -> void:
 							if is_instance_valid(test_door) and not bool(test_door.get_meta("open", true)):
 								print("SERVER_DOOR_CLOSE_REPLICATION_PASS | O anfitrião aplicou o pedido de fecho do cliente")
 								probe.rpc_id(int(peer_id), "close_replication_ack")
-								await create_timer(0.5).timeout
-								quit(0)
+								await create_timer(0.45).timeout
+								var final_states: Dictionary = expedition.get("_player_states")
+								if not final_states.has(peer_id):
+									_fail("O anfitrião perdeu o estado do cliente após a tentativa de teletransporte.")
+									return
+								var final_state: Dictionary = final_states[peer_id]
+								var final_position: Vector3 = final_state.position
+								var expected_after_burst := EXPECTED_CLIENT_POSITION + Vector3(0.18, 0.0, 0.0)
+								if final_position.distance_to(expected_after_burst) > 0.12:
+									_fail("O anfitrião aceitou um pacote demasiado rápido ou o teletransporte; posição final: %s" % final_position)
+									return
+								print("SERVER_BURST_RATE_LIMIT_PASS | O anfitrião rejeitou o segundo pacote enviado demasiado cedo")
+								print("SERVER_TELEPORT_REJECT_PASS | O anfitrião manteve a última posição válida após o pedido de teletransporte")
+								probe.rpc_id(int(peer_id), "teleport_reject_ack")
+								for wall_attempt in range(60):
+									await create_timer(0.1).timeout
+									if bool(probe.get("wall_probe_completed")):
+										var target_peer_id := int(peer_id)
+										for disconnect_attempt in range(30):
+											await create_timer(0.1).timeout
+											if disconnected_peer_id == target_peer_id:
+												break
+										if disconnected_peer_id != target_peer_id:
+											_fail("O anfitrião não detetou a desconexão real do cliente.")
+											return
+										var cleanup_states: Dictionary = expedition.get("_player_states")
+										var remote_players: Dictionary = expedition.get("_remote_players")
+										var remote_targets: Dictionary = expedition.get("_remote_targets")
+										if cleanup_states.has(target_peer_id) or remote_players.has(target_peer_id) or remote_targets.has(target_peer_id):
+											_fail("O anfitrião manteve estado/avatar fantasma após a desconexão.")
+											return
+										print("SERVER_DISCONNECT_CLEANUP_PASS | O anfitrião removeu avatar e estado após a saída real do cliente")
+										quit(0)
+										return
+								_fail("O cliente não concluiu o teste de movimento falsificado através da porta.")
 								return
 						_fail("O anfitrião não recebeu nem aplicou o pedido de fecho da porta do cliente.")
 						return
 				_fail("O anfitrião não recebeu a abertura da porta pedida pelo cliente.")
 				return
 	_fail("O anfitrião não recebeu a posição de teste nem criou o avatar remoto.")
+
+func _on_probe_peer_disconnected(peer_id: int) -> void:
+	disconnected_peer_id = peer_id
+	print("SERVER_PEER_DISCONNECTED_PASS | O anfitrião recebeu a desconexão real do cliente %d" % peer_id)
 
 func _on_connection_failed() -> void:
 	_fail("O cliente não conseguiu ligar-se ao servidor ENet.")

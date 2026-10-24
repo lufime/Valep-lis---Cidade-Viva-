@@ -66,6 +66,8 @@ func _run_tests() -> void:
 	await _test_animation_asset()
 	await _test_main_menu()
 	await _test_multiplayer_replication_helpers(scene)
+	await _test_movement_validation(scene)
+	_test_rpc_authority()
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
 	_finish()
@@ -189,8 +191,8 @@ func _test_mouse_look_and_capture(player: CharacterBody3D) -> void:
 	player.call("_apply_mouse_motion", Vector2(0, -10000))
 	_check(absf(float(player.get("pitch")) - 1.35) < 0.001, "A vista respeita o limite superior de inclinação")
 
-	_skip("Captura/libertação do rato por eventos reais", "O runner Godot headless não fornece um dispositivo de rato capturável; este comportamento requer teste gráfico.")
-	_skip("ESC e clique esquerdo para alternar captura do rato", "O estado Input.mouse_mode não é verificável de forma fiável neste runner headless.")
+	print("INFO | ESC e clique esquerdo são verificados no teste gráfico separado test_mouse_capture_gui.gd.")
+	_skip("Captura/libertação por rato físico real", "O runner automatizado usa eventos sintéticos; não dispõe de um dispositivo físico para validar movimento e clique reais.")
 
 func _test_animation_asset() -> void:
 	# O PRE-FLIGHT gera este GLB a partir da biblioteca CC0; localmente pode não existir.
@@ -481,6 +483,63 @@ func _finish() -> void:
 		push_error(summary + " RESULTADO=FAIL")
 		quit(1)
 
+func _test_rpc_authority() -> void:
+	var source := FileAccess.get_file_as_string("res://scripts/expedition_3d.gd")
+	_check(not source.is_empty(), "O código de rede está disponível para validar a autoridade RPC")
+	_check(source.contains("@rpc(" + '"any_peer", "call_remote", "unreliable"' + ")\nfunc _rpc_submit_player_state"), "A submissão de movimento aceita pedidos de clientes para validação no anfitrião")
+	_check(source.contains("@rpc(" + '"authority", "call_remote", "unreliable"' + ")\nfunc _rpc_sync_player"), "A replicação de movimento só aceita o anfitrião como autoridade")
+	_check(source.contains("_rpc_submit_player_state.rpc_id(1, peer_id, state.position, state.yaw, state.pitch)"), "O cliente envia movimento pelo RPC de submissão validada")
+
+func _test_movement_validation(scene: Node3D) -> void:
+	var start := Vector3.ZERO
+	_check(bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), 0.05)), "A validação de movimento aceita deslocação curta plausível")
+	_check(bool(scene.call("_is_client_movement_valid", start, Vector3(0.21, 0.0, 0.0), 0.05)), "A validação aceita deslocação compatível com a velocidade normal do jogador")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.25, 0.0, 0.0), 0.05)), "A validação rejeita deslocação acima do limite por pacote")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.05, 0.0, 0.0), 0.01)), "A validação rejeita pacotes de movimento demasiado próximos")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.5, 0.0, 0.0), 5.0)), "Uma pausa longa não acumula margem para teletransporte")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(20.0, 0.0, 0.0), 0.05)), "A validação de movimento rejeita teletransporte num único pacote")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(INF, 0.0, 0.0), 0.05)), "A validação de movimento rejeita coordenadas não finitas")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), -1.0)), "A validação de movimento rejeita intervalo temporal inválido")
+	var clear_path_test: bool = scene.call(
+		"_is_movement_path_clear",
+		Vector3(0.0, 0.1, 0.0),
+		Vector3(0.2, 0.1, 0.0)
+	)
+	_check(clear_path_test, "A validação física aceita deslocação numa zona desimpedida")
+	var ground_path_test: bool = scene.call(
+		"_is_movement_path_clear",
+		Vector3.ZERO,
+		Vector3(0.0, 0.0, -0.15)
+	)
+	_check(ground_path_test, "A cápsula permite movimento horizontal à altura real do chão")
+	var previous := Vector3(0.0, 0.0, 0.0)
+	var blocked_step := -1
+	for step in range(1, 23):
+		var target := Vector3(0.0, 0.0, -3.2 * float(step) / 22.0)
+		if not bool(scene.call("_is_movement_path_clear", previous, target)):
+			blocked_step = step
+			break
+		previous = target
+	_check(blocked_step == -1, "A cápsula permite o percurso normal até à zona da porta (passo bloqueado: %d)" % blocked_step)
+	_check(not bool(scene.call("_is_movement_path_clear", Vector3(4.3, 0.1, 3.0), Vector3(5.2, 0.1, 3.0))), "A cápsula física rejeita movimento através de uma parede")
+	await _test_authoritative_door_path(scene, "DoorToNorth", "norte", Vector3(0, 0.1, -4.0), Vector3(0, 0.1, -6.5))
+	await _test_authoritative_door_path(scene, "DoorToEast", "este", Vector3(4.0, 0.1, 0.0), Vector3(6.5, 0.1, 0.0))
+	await _test_authoritative_door_path(scene, "DoorToSouth", "sul", Vector3(0.0, 0.1, 4.0), Vector3(0.0, 0.1, 6.5))
+
+func _test_authoritative_door_path(scene: Node3D, door_name: String, direction_name: String, start: Vector3, target: Vector3) -> void:
+	var door := scene.get_node_or_null(door_name) as Node3D
+	_check(door != null, "A porta " + direction_name + " existe para validar a trajetória física")
+	if door == null:
+		return
+	scene.call("_apply_door_state", door_name, false)
+	await physics_frame
+	_check(not bool(scene.call("_is_movement_path_clear", start, target)), "A cápsula física rejeita atravessar a porta " + direction_name + " fechada")
+	scene.call("_apply_door_state", door_name, true)
+	await physics_frame
+	_check(bool(scene.call("_is_movement_path_clear", start, target)), "A cápsula física permite passar pela porta " + direction_name + " aberta")
+	scene.call("_apply_door_state", door_name, false)
+	await physics_frame
+
 func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var door := scene.get_node_or_null("DoorToNorth") as Node3D
 	_check(door != null, "A porta existe para validar o estado sincronizável")
@@ -500,6 +559,13 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 				var current: Node = stack.pop_back()
 				if current is MeshInstance3D:
 					mesh_count += 1
+					var mesh_instance := current as MeshInstance3D
+					if mesh_instance.mesh != null:
+						for surface_index in range(mesh_instance.mesh.get_surface_count()):
+							var active_material := mesh_instance.get_active_material(surface_index) as StandardMaterial3D
+							if active_material != null:
+								_check(absf(active_material.albedo_color.r - active_material.albedo_color.g) < 0.08 and absf(active_material.albedo_color.g - active_material.albedo_color.b) < 0.08 and active_material.roughness >= 0.75 and active_material.metallic <= 0.1, "O modelo humanoide usa material mate neutro sem dominante jade")
+								break
 				if current is Skeleton3D:
 					skeleton_count += 1
 					_check((current as Skeleton3D).get_bone_count() >= 60, "O modelo humanoide inclui esqueleto articulado")
@@ -552,6 +618,16 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	_check(bool(door.get_meta("open", false)), "O anfitrião alterna a porta a partir do estado autoritativo")
 	scene.call("_toggle_door_authoritatively", "DoorToNorth")
 	_check(not bool(door.get_meta("open", true)), "O anfitrião fecha a porta sem confiar no estado pedido pelo cliente")
+
+	var remote_key := avatar.get_instance_id() if is_instance_valid(avatar) else 0
+	scene.call("_on_peer_disconnected", 42)
+	_check(not (scene.get("_remote_players") as Dictionary).has(42), "A desconexão remove o avatar remoto do registo")
+	_check(not (scene.get("_remote_targets") as Dictionary).has(42), "A desconexão remove o destino de movimento remoto")
+	_check(not (scene.get("_player_states") as Dictionary).has(42), "A desconexão remove o estado do jogador")
+	_check(not (scene.get("_remote_animation_players") as Dictionary).has(remote_key), "A desconexão limpa o AnimationPlayer remoto")
+	_check(not (scene.get("_remote_animation_names") as Dictionary).has(remote_key), "A desconexão limpa os dados de animação remota")
+	await process_frame
+	_check(not is_instance_valid(avatar), "A desconexão liberta o avatar remoto da cena")
 
 func _test_environment_lighting(scene: Node3D) -> void:
 	var environment: WorldEnvironment

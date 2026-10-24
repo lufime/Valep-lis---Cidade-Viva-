@@ -4,6 +4,9 @@ const PLAYER_SCENE_SCRIPT := "res://scripts/expedition_player.gd"
 
 const REMOTE_PLAYER_COLOR := Color("#e2a35c")
 const PLAYER_SYNC_INTERVAL := 0.05
+const MIN_CLIENT_SYNC_INTERVAL := 0.045
+const CLIENT_MOVEMENT_SPEED := 4.2
+const CLIENT_MOVEMENT_DISTANCE_TOLERANCE := 0.03
 
 var _local_player: CharacterBody3D
 var _remote_players: Dictionary = {}
@@ -13,6 +16,7 @@ var _remote_animation_players: Dictionary = {}
 var _remote_animation_names: Dictionary = {}
 var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
+var _last_server_sync_msec: Dictionary = {}
 var _sync_elapsed := 0.0
 
 func _process(delta: float) -> void:
@@ -41,7 +45,7 @@ func _process(delta: float) -> void:
 	if multiplayer.is_server():
 		_broadcast_player_state(peer_id, state)
 	else:
-		_rpc_sync_player.rpc_id(1, peer_id, state.position, state.yaw, state.pitch)
+		_rpc_submit_player_state.rpc_id(1, peer_id, state.position, state.yaw, state.pitch)
 
 func _register_with_host() -> void:
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
@@ -52,14 +56,16 @@ func _register_with_host() -> void:
 func _rpc_register_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
 	if not multiplayer.is_server() or multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
 		return
-	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	var spawn_position := Vector3(0, 0.1, 0)
+	var state := {"position": spawn_position, "yaw": 0.0, "pitch": 0.0}
 	_player_states[peer_id] = state
+	_last_server_sync_msec[peer_id] = Time.get_ticks_msec()
 	for existing_id in _player_states.keys():
 		var existing_state: Dictionary = _player_states[existing_id]
 		if int(existing_id) != peer_id:
 			_rpc_add_remote_player.rpc_id(peer_id, int(existing_id), existing_state.position, float(existing_state.yaw), float(existing_state.pitch))
-	_add_remote_player(peer_id, position, yaw, pitch)
-	_rpc_add_remote_player.rpc(peer_id, position, yaw, pitch)
+	_add_remote_player(peer_id, spawn_position, 0.0, 0.0)
+	_rpc_add_remote_player.rpc(peer_id, spawn_position, 0.0, 0.0)
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
@@ -310,16 +316,37 @@ func _make_remote_avatar_part(
 	avatar.add_child(part)
 
 @rpc("any_peer", "call_remote", "unreliable")
+func _rpc_submit_player_state(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	# Clientes apenas submetem movimento ao anfitrião; nunca podem publicar diretamente
+	# estados de outros jogadores para os restantes clientes.
+	if not multiplayer.is_server():
+		return
+	if multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
+		return
+	if not _player_states.has(peer_id):
+		return
+	var previous_state: Dictionary = _player_states[peer_id]
+	var now_msec := Time.get_ticks_msec()
+	var last_msec := int(_last_server_sync_msec.get(peer_id, now_msec))
+	var elapsed_seconds := float(now_msec - last_msec) / 1000.0
+	if not _is_client_movement_valid(previous_state.position, position, elapsed_seconds):
+		return
+	if not _is_movement_path_clear(previous_state.position, position):
+		return
+	if not is_finite(yaw) or not is_finite(pitch) or absf(pitch) > 1.5:
+		return
+	_last_server_sync_msec[peer_id] = now_msec
+	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	_player_states[peer_id] = state
+	_apply_remote_position(peer_id, position, yaw, pitch)
+	_broadcast_player_state(peer_id, state)
+
+@rpc("authority", "call_remote", "unreliable")
 func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	# Apenas o anfitrião pode distribuir estados de movimento aos clientes.
 	if multiplayer.is_server():
-		if multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
-			return
-		var state := {"position": position, "yaw": yaw, "pitch": pitch}
-		_player_states[peer_id] = state
-		_apply_remote_position(peer_id, position, yaw, pitch)
-		_broadcast_player_state(peer_id, state)
-	else:
-		_apply_remote_position(peer_id, position, yaw, pitch)
+		return
+	_apply_remote_position(peer_id, position, yaw, pitch)
 
 func _broadcast_player_state(peer_id: int, state: Dictionary) -> void:
 	_apply_remote_position(peer_id, state.position, float(state.yaw), float(state.pitch))
@@ -395,6 +422,7 @@ func _apply_door_state(door_name: String, is_open: bool) -> void:
 			_local_player.call("_update_door_prompt")
 
 func _ready() -> void:
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	_build_environment()
 	_build_map()
 	var player := CharacterBody3D.new()
@@ -407,6 +435,62 @@ func _ready() -> void:
 	_build_hud()
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not multiplayer.is_server():
 		call_deferred("_register_with_host")
+
+func _on_peer_disconnected(peer_id: int) -> void:
+	# Remove all transient state for a player who left; do not leave a ghost avatar.
+	var avatar := _remote_players.get(peer_id) as Node3D
+	if is_instance_valid(avatar):
+		var avatar_key := avatar.get_instance_id()
+		_remote_skeletons.erase(avatar_key)
+		_remote_animation_players.erase(avatar_key)
+		_remote_animation_names.erase(avatar_key)
+		_remote_anim_time.erase(peer_id)
+		avatar.queue_free()
+	_remote_players.erase(peer_id)
+	_remote_targets.erase(peer_id)
+	_player_states.erase(peer_id)
+	_last_server_sync_msec.erase(peer_id)
+
+func _is_client_movement_valid(previous_position: Vector3, new_position: Vector3, elapsed_seconds: float) -> bool:
+	if not is_finite(new_position.x) or not is_finite(new_position.y) or not is_finite(new_position.z):
+		return false
+	if not is_finite(elapsed_seconds) or elapsed_seconds < MIN_CLIENT_SYNC_INTERVAL:
+		return false
+	# A pausa não acumula deslocação disponível; um pacote isolado não pode aproveitar
+	# vários segundos sem movimento para saltar uma grande distância.
+	var bounded_elapsed := minf(elapsed_seconds, PLAYER_SYNC_INTERVAL)
+	var maximum_distance := CLIENT_MOVEMENT_SPEED * bounded_elapsed + CLIENT_MOVEMENT_DISTANCE_TOLERANCE
+	return previous_position.distance_to(new_position) <= maximum_distance
+
+func _is_movement_path_clear(previous_position: Vector3, new_position: Vector3) -> bool:
+	# Varre o volume da cápsula real do jogador no mundo físico do anfitrião.
+	# Um raio central permitiria a um cliente atravessar cantos/arestas com passos pequenos.
+	var displacement := new_position - previous_position
+	if displacement.length_squared() <= 0.000001:
+		return true
+	var world := get_world_3d()
+	if world == null:
+		return false
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.38
+	capsule.height = 1.8
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = capsule
+	# Mantém a cápsula 2 cm acima do chão: o root do jogador pode estar a y=0
+	# depois da gravidade, e uma margem a tocar no chão bloquearia todo o movimento horizontal.
+	query.transform = Transform3D(Basis.IDENTITY, previous_position + Vector3(0.0, 0.92, 0.0))
+	query.motion = displacement
+	query.margin = 0.005
+	if is_instance_valid(_local_player):
+		query.exclude = [_local_player.get_rid()]
+	var space := world.direct_space_state
+	# Não aceitamos uma trajetória que comece dentro de uma parede/porta.
+	if not space.intersect_shape(query, 8).is_empty():
+		return false
+	var fractions := space.cast_motion(query)
+	if fractions.size() < 2:
+		return false
+	return float(fractions[0]) >= 0.999
 
 func _build_environment() -> void:
 	var environment := WorldEnvironment.new()

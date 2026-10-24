@@ -9,30 +9,32 @@ Esta pasta é uma reconstrução inicial e isolada do projeto. Não substitui ne
 
 ## O que existe nesta base
 
-- Menu inicial com interface ENet para tentar criar uma sala ou ligar a um anfitrião por IP.
-- Protótipo 3D de bloco cinzento com sala central e três zonas adjacentes: norte, este e sul.
+- Menu inicial com opções para iniciar a expedição, criar uma sala ENet local, ligar a um anfitrião por IP e desligar.
+- Protótipo 3D com sala central e três zonas adjacentes: norte, este e sul.
 - Jogador local em primeira pessoa, movimento por WASD e olhar pelo rato.
-- Três portas com colisão física, interação por E e pivô colocado na extremidade para não bloquear a linha de passagem quando abertas.
-- Testes automatizados para carregamento da cena, presença das zonas, deteção das portas, abertura/fecho, bloqueio quando fechadas e passagem física do corpo do jogador quando abertas.
+- Três portas com colisão física, interação por E e passagem física testada quando abertas.
+- Modelo humanoide GLB com esqueleto e clips de repouso, caminhada e corrida para representações remotas.
+- Replicação técnica de posições/orientações e estado das portas; o anfitrião impõe o spawn, limita cadência/distância e valida a trajetória com varrimento da cápsula física do jogador contra as colisões do mapa. Os testes ENet em processos separados cobrem teletransporte, tentativa de atravessar uma porta fechada em pequenos passos falsificados e limpeza real do avatar/estado após a saída do cliente.
+- Limpeza do avatar e do estado transitório quando um jogador se desconecta.
+- Teste gráfico separado com eventos sintéticos para captura inicial do rato, ESC para libertar e clique esquerdo para recapturar.
 
-Este é apenas um protótipo técnico. **Não é ainda uma versão jogável completa nem tem arte 3D realista.**
+Este é apenas um protótipo técnico. **Não é ainda uma versão jogável completa nem tem arte 3D final/realista.**
 
-## Limitações conhecidas
+## Limitações e riscos conhecidos
 
-- A interface ENet tenta estabelecer ligações e mostra contagem de ligações, mas não sincroniza ainda o cenário nem as ações de jogo entre jogadores.
-- Não existem ainda modelos finais, animações, criatura, IA da criatura, sistema do traidor, objetivos secretos, inventário ou missões.
+- A rede é apenas uma base técnica: não existe sincronização completa de todas as ações, sistemas e estado do mundo, nem relay, matchmaking ou servidor dedicado.
+- **Autoridade/segurança ainda incompleta:** o anfitrião ignora a posição inicial declarada pelo cliente, limita cadência/distância e verifica cada segmento recebido com um varrimento da cápsula contra paredes e portas. O teste ENet entre dois processos confirmou a rejeição de teletransporte e de passos falsificados através de uma porta fechada. Mesmo assim, o cliente continua a enviar posições; o servidor ainda não simula o movimento com `CharacterBody3D`, aceleração, gravidade e estado de chão. A validação atual é uma mitigação, não movimento plenamente autoritativo nem proteção completa contra batota; faltam ensaios sob latência/perda de pacotes e com vários clientes.
+- Não existem ainda a criatura de jogo, IA da criatura, sistema do traidor, objetivos secretos, inventário ou missões funcionais.
 - A criatura deve estar presente em todas as partidas e ser controlada exclusivamente pela IA.
 - O traidor deve ser um jogador humano distinto, informado em privado e com objetivos secretos.
 - A introdução pública não pode revelar a identidade do traidor nem a natureza da criatura.
-- Para jogar através da Internet, é necessário um anfitrião acessível e configuração de rede. Esta base não fornece relay, matchmaking ou servidor dedicado.
-- A permissão de Internet e as predefinições de exportação Android ainda precisam de ser verificadas antes de produzir um APK.
+- A permissão de Internet e as predefinições de exportação Android ainda precisam de ser verificadas antes de produzir e validar um APK.
+- O teste de rato físico real permanece omitido no CI porque o runner não dispõe de um dispositivo físico. O teste gráfico usa eventos sintéticos e não substitui o ensaio num computador/dispositivo real.
 
 ## PRE-FLIGHT
 
-O workflow `.github/workflows/expedicao-preflight.yml` executa Godot 4.5 em modo headless para:
-1. importar e analisar o projeto;
-2. verificar o arranque do projeto;
-3. carregar diretamente a cena 3D;
-4. executar os testes funcionais de portas e passagens.
+O workflow `.github/workflows/expedicao-preflight.yml` executa Godot 4.5 e verifica importação/análise, arranque, cenas, portas e passagens, movimento, animações e testes ENet locais.
 
-A última execução verificada, no commit `fdd81a643ba029d227b7ba254d4ea76020847f07`, passou todos estes gates. Isso confirma apenas os testes automatizados enumerados acima; não confirma a conclusão dos sistemas de jogo ainda ausentes.
+Consultar a execução mais recente de [GitHub Actions nesta branch](https://github.com/lufime/Valep-lis---Cidade-Viva-/actions/workflows/expedicao-preflight.yml?query=branch%3Arebuild%2Fa-ultima-expedicao-zero) e confirmar que o SHA testado corresponde ao HEAD. Cada contagem PASS/FAIL/SKIP só é válida para o commit e os logs dessa execução; uma alteração posterior exige uma nova execução verde.
+
+O PRE-FLIGHT confirma apenas os testes efetivamente executados. Não confirma que os sistemas de jogo em falta estejam implementados, que a rede esteja segura contra clientes maliciosos, nem que o APK Android esteja pronto.
