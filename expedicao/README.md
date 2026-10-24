@@ -35,4 +35,4 @@ O workflow `.github/workflows/expedicao-preflight.yml` executa Godot 4.5 em modo
 3. carregar diretamente a cena 3D;
 4. executar os testes funcionais de portas e passagens.
 
-A última execução verificada, no commit `fdd81a643ba029d227b7ba254d4ea76020847f07`, passou todos estes gates. Isso confirma apenas os testes automatizados enumerados acima; não confirma a conclusão dos sistemas de jogo ainda ausentes.
+Última execução verde verificada antes das alterações atuais: [40110891741](https://github.com/lufime/Valep-lis---Cidade-Viva-/actions/runs/40110891741), no commit `ce94254b990c3fa7f44c6d2fce30a79964c49587` (138 PASS, 0 FAIL, 2 SKIP). As alterações posteriores ainda precisam de uma nova execução verde. Este resultado confirma apenas os testes automatizados enumerados acima; não confirma a conclusão dos sistemas de jogo ainda ausentes.
