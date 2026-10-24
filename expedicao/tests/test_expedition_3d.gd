@@ -55,6 +55,7 @@ func _run_tests() -> void:
 
 	await _test_player_navigation(scene, player)
 	await _test_main_menu()
+	await _test_multiplayer_connection()
 	_finish()
 
 func _test_player_navigation(scene: Node3D, player: CharacterBody3D) -> void:
@@ -92,6 +93,69 @@ func _test_main_menu() -> void:
 	_check(menu.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Desligar deve repor o modo offline")
 	_check((menu.get("host_button") as Button).disabled == false, "O botão criar sala deve reativar após desligar")
 	menu.queue_free()
+	await process_frame
+
+func _test_multiplayer_connection() -> void:
+	var menu_scene := load("res://scenes/main.tscn") as PackedScene
+	_check(menu_scene != null, "A cena do menu está disponível para o teste de rede")
+	if menu_scene == null:
+		return
+
+	var host_root := Node.new()
+	host_root.name = "TestHostRoot"
+	root.add_child(host_root)
+	var client_root := Node.new()
+	client_root.name = "TestClientRoot"
+	root.add_child(client_root)
+
+	var host_api := MultiplayerAPI.create_default_interface()
+	var client_api := MultiplayerAPI.create_default_interface()
+	set_multiplayer(host_api, host_root.get_path())
+	set_multiplayer(client_api, client_root.get_path())
+
+	var host_menu := menu_scene.instantiate() as Control
+	host_root.add_child(host_menu)
+	await process_frame
+	host_menu.call("_host_game")
+	await process_frame
+	_check(host_api.is_server(), "O anfitrião de teste inicia um servidor ENet real")
+
+	var client_menu := menu_scene.instantiate() as Control
+	client_root.add_child(client_menu)
+	await process_frame
+	var address_input := client_menu.get("address_input") as LineEdit
+	address_input.text = "127.0.0.1"
+	client_menu.call("_join_game")
+
+	var connected := false
+	for attempt in range(100):
+		await create_timer(0.05).timeout
+		if client_api.multiplayer_peer != null and client_api.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and host_api.get_peers().size() == 1:
+			connected = true
+			break
+
+	_check(connected, "Um cliente ENet local consegue ligar-se ao anfitrião")
+	_check(host_api.get_peers().size() == 1, "O anfitrião reconhece o cliente ligado")
+	var host_players_label := host_menu.get("players_label") as Label
+	_check(host_players_label != null and host_players_label.text == "Jogadores ligados: 2", "O anfitrião atualiza a contagem para dois jogadores")
+	var client_status_label := client_menu.get("status_label") as Label
+	_check(client_status_label != null and client_status_label.text.contains("Ligação ao anfitrião estabelecida."), "O cliente apresenta a ligação estabelecida")
+
+	client_menu.call("_disconnect_game")
+	var disconnected := false
+	for attempt in range(40):
+		await create_timer(0.05).timeout
+		if host_api.get_peers().is_empty():
+			disconnected = true
+			break
+	_check(disconnected, "O anfitrião deteta a saída do cliente")
+	if host_players_label != null:
+		_check(host_players_label.text == "Jogadores ligados: 1", "A contagem do anfitrião regressa a um após a saída do cliente")
+
+	host_menu.call("_disconnect_game")
+	await process_frame
+	client_root.queue_free()
+	host_root.queue_free()
 	await process_frame
 
 func _test_door_passage(
@@ -185,7 +249,7 @@ func _check(condition: bool, message: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("RESULTADO=PASS | Cena, deteção, abertura/fecho e passagem física pelas três portas passaram.")
+		print("RESULTADO=PASS | Cena, portas e passagens físicas, navegação/colisão do jogador, menu e ligação ENet local passaram.")
 		quit(0)
 	else:
 		push_error("RESULTADO=FAIL | ", failures.size(), " teste(s) falharam.")
