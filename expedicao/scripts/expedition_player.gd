@@ -91,11 +91,11 @@ func _update_door_prompt() -> void:
 	if not hit.is_empty():
 		var collider: Object = hit.get("collider")
 		if collider is Node3D:
-			var door_root: Node3D = collider
+			var door_root: Node3D = collider as Node3D
 			if collider.has_meta("door_root") and collider is Node:
-				var parent := collider.get_parent()
-				if parent is Node3D and parent.has_meta("is_door"):
-					door_root = parent
+				var parent_node: Node = (collider as Node).get_parent()
+				if parent_node is Node3D and parent_node.has_meta("is_door"):
+					door_root = parent_node as Node3D
 			if door_root.has_meta("is_door"):
 				nearby_door = door_root
 				prompt.text = "[E] Abrir porta" if not bool(door_root.get_meta("open")) else "[E] Fechar porta"
