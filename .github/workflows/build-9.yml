@@ -400,6 +400,10 @@ jobs:
           set -euo pipefail
           cd "$PROJECT_DIR"
           godot --headless --path . --quit-after 5 2>&1 | tee "$GITHUB_WORKSPACE/godot-startup.log"
+          if grep -Eiq 'SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR: Failed to load script' "$GITHUB_WORKSPACE/godot-startup.log"; then
+            echo "::error::O arranque Godot reportou erros de script; não permitir exportação nem publicação do APK."
+            exit 1
+          fi
 
       - name: Preparar Android SDK
         uses: android-actions/setup-android@v3.2.2
