@@ -107,6 +107,13 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 					run_name = _find_animation_name(animation_player, "sprint")
 				if run_name.is_empty():
 					run_name = _find_animation_name(animation_player, "fast")
+				# As animações de locomoção e repouso devem repetir continuamente.
+				# Alguns clips importados podem vir sem loop configurado no recurso.
+				for locomotion_name in [idle_name, walk_name, run_name]:
+					if not locomotion_name.is_empty():
+						var locomotion_animation := animation_player.get_animation(locomotion_name)
+						if locomotion_animation != null:
+							locomotion_animation.loop_mode = Animation.LOOP_LINEAR
 				if not walk_name.is_empty() or not idle_name.is_empty() or not run_name.is_empty():
 					_remote_animation_players[avatar.get_instance_id()] = animation_player
 					_remote_animation_names[avatar.get_instance_id()] = {"walk": walk_name, "idle": idle_name, "run": run_name, "current": ""}

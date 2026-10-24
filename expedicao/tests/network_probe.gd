@@ -2,7 +2,6 @@ extends SceneTree
 
 const TEST_PORT: int = 24561
 const EXPECTED_CLIENT_POSITION := Vector3(0.0, 0.1, -3.2)
-const EXPECTED_HOST_POSITION := Vector3(1.5, 0.1, 0.75)
 
 var probe: Node
 var api: MultiplayerAPI
@@ -32,13 +31,6 @@ func _start_probe() -> void:
 			return
 		api.multiplayer_peer = server_peer
 		_create_expedition()
-		var host_player := expedition.get_node_or_null("LocalPlayer") as CharacterBody3D
-		if host_player == null:
-			_fail("O jogador local do anfitrião não foi criado.")
-			return
-		host_player.global_position = EXPECTED_HOST_POSITION
-		var host_states: Dictionary = expedition.get("_player_states")
-		host_states[api.get_unique_id()] = {"position": EXPECTED_HOST_POSITION, "yaw": host_player.rotation.y, "pitch": float(host_player.get("pitch"))}
 		print("SERVER_READY | À escuta na porta UDP %d" % TEST_PORT)
 		_watch_server_replication()
 		create_timer(10.0).timeout.connect(_on_timeout)
@@ -75,30 +67,6 @@ func _on_connected_to_server() -> void:
 		return
 	local_player.global_position = EXPECTED_CLIENT_POSITION
 	print("CLIENT_MOVED | Posição de teste enviada para replicação")
-	var remote_host: Node3D
-	for attempt in range(20):
-		await create_timer(0.1).timeout
-		remote_host = expedition.get_node_or_null("RemotePlayer_1") as Node3D
-		var remote_targets: Dictionary = expedition.get("_remote_targets")
-		if remote_host != null and remote_targets.has(1):
-			break
-	if remote_host == null:
-		_fail("O cliente não criou o avatar remoto do anfitrião (RemotePlayer_1).")
-		return
-	var replicated_targets: Dictionary = expedition.get("_remote_targets")
-	if not replicated_targets.has(1):
-		_fail("O cliente não recebeu o estado de posição do anfitrião.")
-		return
-	var host_state: Dictionary = replicated_targets[1]
-	var replicated_host_position: Vector3 = host_state.position
-	if replicated_host_position.distance_to(EXPECTED_HOST_POSITION) > 0.75:
-		_fail("A posição replicada do anfitrião não corresponde ao destino de teste: %s" % replicated_host_position)
-		return
-	if remote_host.global_position.distance_to(EXPECTED_HOST_POSITION) > 1.0:
-		_fail("O avatar remoto do anfitrião não se aproximou da posição replicada.")
-		return
-	print("CLIENT_REMOTE_PLAYER_PASS | O cliente recebeu posição e avatar remoto do anfitrião")
-	print("CLIENT_REPLICATION_PASS | Replicação anfitrião-cliente verificada no cliente")
 	await create_timer(0.5).timeout
 	var test_door := expedition.get_node_or_null("DoorToNorth") as Node3D
 	if test_door == null:

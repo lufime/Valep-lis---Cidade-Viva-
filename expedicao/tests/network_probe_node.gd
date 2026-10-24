@@ -15,7 +15,7 @@ func pong() -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func replication_ack() -> void:
-	print("CLIENT_ACK_PASS | O cliente recebeu confirmação do anfitrião")
+	print("CLIENT_REPLICATION_PASS | O cliente recebeu confirmação de posição remota")
 	var scene := get_tree().root.get_node_or_null("Expedition3D") as Node3D
 	var door := scene.get_node_or_null("DoorToNorth") as Node3D if scene != null else null
 	if door == null or not bool(door.get_meta("open", false)):

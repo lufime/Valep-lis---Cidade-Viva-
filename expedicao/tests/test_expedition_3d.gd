@@ -508,6 +508,12 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 		var animation_names := scene.get("_remote_animation_names") as Dictionary
 		var animation_player := animation_players.get(avatar.get_instance_id()) as AnimationPlayer
 		if animation_player != null:
+			var locomotion_names: Dictionary = animation_names.get(avatar.get_instance_id(), {})
+			for movement_type in ["idle", "walk", "run"]:
+				var clip_name := String(locomotion_names.get(movement_type, ""))
+				if not clip_name.is_empty():
+					var clip := animation_player.get_animation(clip_name)
+					_check(clip != null and clip.loop_mode == Animation.LOOP_LINEAR, "O clip " + clip_name + " repete continuamente")
 			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 0.0)
 			_check(animation_player.current_animation.to_lower().contains("idle"), "O avatar remoto usa repouso quando está parado")
 			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 1.5)

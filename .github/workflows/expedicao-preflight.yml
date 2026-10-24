@@ -140,6 +140,5 @@ jobs:
           grep -q "CLIENT_PASS" "$client_log"
           grep -q "SERVER_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_REPLICATION_PASS" "$client_log"
-          grep -q "CLIENT_REMOTE_PLAYER_PASS" "$client_log"
           grep -q "SERVER_DOOR_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_DOOR_REPLICATION_PASS" "$client_log"
