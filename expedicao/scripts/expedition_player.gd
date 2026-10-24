@@ -43,9 +43,7 @@ func _build_player() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
-		pitch = clampf(pitch - event.relative.y * MOUSE_SENSITIVITY, -1.35, 1.35)
-		camera.rotation.x = pitch
+		_apply_mouse_motion(event.relative)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -53,6 +51,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_interact()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _apply_mouse_motion(relative: Vector2) -> void:
+	rotate_y(-relative.x * MOUSE_SENSITIVITY)
+	pitch = clampf(pitch - relative.y * MOUSE_SENSITIVITY, -1.35, 1.35)
+	camera.rotation.x = pitch
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
