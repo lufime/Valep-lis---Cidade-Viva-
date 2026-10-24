@@ -500,8 +500,8 @@ func _test_movement_validation(scene: Node3D) -> void:
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(20.0, 0.0, 0.0), 0.05)), "A validação de movimento rejeita teletransporte num único pacote")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(INF, 0.0, 0.0), 0.05)), "A validação de movimento rejeita coordenadas não finitas")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), -1.0)), "A validação de movimento rejeita intervalo temporal inválido")
-	_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, 0), Vector3(0.2, 0.1, 0)), "A validação física aceita deslocação numa zona desimpedida")
-	_check(not bool(scene.call("_is_movement_path_clear", Vector3(4.6, 0.1, 3.0), Vector3(5.2, 0.1, 3.0)), "A validação física rejeita movimento através de uma parede")
+	_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, 0), Vector3(0.2, 0.1, 0))), "A validação física aceita deslocação numa zona desimpedida")
+	_check(not bool(scene.call("_is_movement_path_clear", Vector3(4.6, 0.1, 3.0), Vector3(5.2, 0.1, 3.0))), "A validação física rejeita movimento através de uma parede")
 
 func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var door := scene.get_node_or_null("DoorToNorth") as Node3D
