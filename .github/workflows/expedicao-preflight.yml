@@ -20,6 +20,7 @@ jobs:
   godot-smoke-test:
     name: Verificar projeto Godot em modo headless
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Obter código
         uses: actions/checkout@v4
@@ -61,5 +62,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
+          timeout --signal=TERM --kill-after=5s 60s \
+            /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
             --headless --path expedicao --script res://tests/test_expedition_3d.gd
