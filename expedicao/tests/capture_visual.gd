@@ -23,6 +23,9 @@ func _capture_scene() -> void:
 		quit(1)
 		return
 	camera.current = true
+	# Enquadramento de demonstração: ver o avatar e a porta no mesmo plano.
+	camera.global_position = Vector3(0.0, 2.2, 4.5)
+	camera.look_at(Vector3(0.0, 1.05, -3.0), Vector3.UP)
 
 	# Mostrar também o avatar humanoide na captura de validação.
 	var player_model := load("res://assets/character_animated.glb") as PackedScene
@@ -33,8 +36,15 @@ func _capture_scene() -> void:
 		if showcase_character != null:
 			showcase_character.name = "ShowcaseCharacter"
 			showcase_character.position = Vector3(0.0, 0.0, -2.0)
+			showcase_character.scale = Vector3.ONE
 			showcase_character.rotation.y = PI
 			scene.add_child(showcase_character)
+			print("SHOWCASE_CHARACTER_PASS | Modelo humanoide adicionado à captura")
+
+	else:
+		push_error("FAIL | Não foi possível carregar character_animated.glb nem character.glb")
+		quit(1)
+		return
 
 	# A captura de validação mostra as três ligações abertas para que os vãos
 	# não sejam confundidos com portas bloqueadas na imagem estática.
