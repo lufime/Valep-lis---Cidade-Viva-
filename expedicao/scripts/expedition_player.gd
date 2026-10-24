@@ -99,13 +99,16 @@ func _update_door_prompt() -> void:
 func _interact() -> void:
 	if nearby_door == null or not is_instance_valid(nearby_door):
 		return
-	var is_open := bool(nearby_door.get_meta("open"))
-	nearby_door.set_meta("open", not is_open)
-	var target_yaw := float(nearby_door.get_meta("closed_yaw", nearby_door.rotation.y))
+	var is_open := bool(nearby_door.get_meta("open", false))
+	var closed_yaw := float(nearby_door.get_meta("closed_yaw", nearby_door.rotation.y))
 	if not nearby_door.has_meta("closed_yaw"):
-		nearby_door.set_meta("closed_yaw", target_yaw)
-	if not is_open:
-		nearby_door.rotation.y = target_yaw + PI / 2.0
-	else:
-		nearby_door.rotation.y = target_yaw
-	prompt.text = "[E] Fechar porta" if not is_open else "[E] Abrir porta"
+		nearby_door.set_meta("closed_yaw", closed_yaw)
+	var next_open := not is_open
+	nearby_door.set_meta("open", next_open)
+	# Aplicar a rotação a partir do ângulo fechado guardado, sem acumular erro.
+	nearby_door.rotation = Vector3(
+		nearby_door.rotation.x,
+		closed_yaw + (PI / 2.0 if next_open else 0.0),
+		nearby_door.rotation.z
+	)
+	prompt.text = "[E] Fechar porta" if next_open else "[E] Abrir porta"
