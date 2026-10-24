@@ -333,10 +333,12 @@ func _test_door_passage(
 
 	var initial_yaw: float = door.rotation.y
 	player.set("nearby_door", door)
-	player.call("_interact")
+	_press_interaction_key(player)
 	await physics_frame
 	await physics_frame
-	_check(bool(door.get_meta("open", false)), "A interação abre a porta " + direction_name)
+	_check(bool(door.get_meta("open", false)), "A tecla E abre a porta " + direction_name)
+	var door_prompt := player.get("prompt") as Label
+	_check(door_prompt != null and door_prompt.text == "[E] Fechar porta", "O aviso da porta " + direction_name + " muda para fechar")
 	_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) > 0.1, "A porta " + direction_name + " roda ao abrir")
 
 	var open_hit := _raycast(scene, player, ray_from, ray_to)
@@ -350,14 +352,22 @@ func _test_door_passage(
 	_check(_returned_to_central(direction_name, player.position), "O jogador regressa fisicamente à sala central pela porta " + direction_name)
 
 	player.set("nearby_door", door)
-	player.call("_interact")
+	_press_interaction_key(player)
 	await physics_frame
 	await physics_frame
-	_check(not bool(door.get_meta("open", true)), "Uma segunda interação fecha a porta " + direction_name)
+	_check(not bool(door.get_meta("open", true)), "A tecla E fecha a porta " + direction_name)
+	_check(door_prompt != null and door_prompt.text == "[E] Abrir porta", "O aviso da porta " + direction_name + " muda para abrir")
 	_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) < 0.1, "A porta " + direction_name + " regressa à rotação inicial")
 
 	var closed_again_hit := _raycast(scene, player, ray_from, ray_to)
 	_check(_is_door_hit(closed_again_hit), "A passagem " + direction_name + " volta a ficar bloqueada ao fechar")
+
+func _press_interaction_key(player: CharacterBody3D) -> void:
+	var event := InputEventKey.new()
+	event.keycode = KEY_E
+	event.physical_keycode = KEY_E
+	event.pressed = true
+	player.call("_unhandled_input", event)
 
 func _walk_steps(player: CharacterBody3D, motion: Vector3, steps: int) -> void:
 	for i in range(steps):
