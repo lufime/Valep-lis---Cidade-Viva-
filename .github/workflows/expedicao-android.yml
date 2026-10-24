@@ -72,16 +72,30 @@ jobs:
           test -n "$sdk_path"
           java_bin="$(readlink -f "$(command -v java)")"
           java_home="$(dirname "$(dirname "$java_bin")")"
-          mkdir -p "$HOME/.config/godot"
+          keystore="$HOME/.android/debug.keystore"
+          mkdir -p "$HOME/.config/godot" "$HOME/.android"
+          if [ ! -s "$keystore" ]; then
+            keytool -genkeypair -v \
+              -keystore "$keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
           export/android/android_sdk_path = "$sdk_path"
           export/android/java_sdk_path = "$java_home"
+          export/android/debug_keystore = "$keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
           EOF
           test -d "$sdk_path/platforms/android-35"
           test -x "$java_bin"
+          test -s "$keystore"
 
       - name: Importar projeto e validar configuração Android
         shell: bash
