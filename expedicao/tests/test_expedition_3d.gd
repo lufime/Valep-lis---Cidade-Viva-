@@ -66,7 +66,7 @@ func _run_tests() -> void:
 	await _test_animation_asset()
 	await _test_main_menu()
 	await _test_multiplayer_replication_helpers(scene)
-	_test_movement_validation(scene)
+	await _test_movement_validation(scene)
 	_test_rpc_authority()
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
@@ -516,10 +516,13 @@ func _test_movement_validation(scene: Node3D) -> void:
 	_check(north_door != null, "A porta norte existe para validar a trajetória física")
 	if north_door != null:
 		scene.call("_apply_door_state", "DoorToNorth", false)
+		await physics_frame
 		_check(not bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, -4.0), Vector3(0, 0.1, -6.5))), "A cápsula física rejeita atravessar a porta norte fechada")
 		scene.call("_apply_door_state", "DoorToNorth", true)
+		await physics_frame
 		_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, -4.0), Vector3(0, 0.1, -6.5))), "A cápsula física permite passar pela porta norte aberta")
 		scene.call("_apply_door_state", "DoorToNorth", false)
+		await physics_frame
 
 func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var door := scene.get_node_or_null("DoorToNorth") as Node3D
