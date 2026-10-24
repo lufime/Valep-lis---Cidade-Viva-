@@ -78,8 +78,8 @@ func _on_connected_to_server() -> void:
 	if local_player == null:
 		_fail("O jogador local não foi criado no cliente.")
 		return
-	local_player.global_position = EXPECTED_CLIENT_POSITION
-	print("CLIENT_MOVED | Posição de teste enviada para replicação")
+	await _move_player_gradually(local_player, EXPECTED_CLIENT_POSITION)
+	print("CLIENT_MOVED | Posição de teste enviada gradualmente para replicação")
 	var remote_host: Node3D
 	for attempt in range(20):
 		await create_timer(0.1).timeout
@@ -118,18 +118,28 @@ func _on_connected_to_server() -> void:
 	if local_player == null:
 		_fail("O jogador local do cliente não existe para o teste de autorização da porta.")
 		return
-	local_player.global_position = Vector3(20.0, 0.1, 20.0)
-	await create_timer(0.45).timeout
+	await _move_player_gradually(local_player, Vector3(0.0, 0.1, 0.0))
+	await create_timer(0.15).timeout
 	expedition.call("_request_door_toggle", test_door)
 	await create_timer(0.45).timeout
 	if bool(test_door.get_meta("open", false)):
 		_fail("O anfitrião aceitou indevidamente a abertura de porta pedida por um cliente distante.")
 		return
 	print("CLIENT_DOOR_DISTANCE_GUARD_PASS | Pedido de cliente distante rejeitado")
-	local_player.global_position = EXPECTED_CLIENT_POSITION
-	await create_timer(0.45).timeout
+
+	await _move_player_gradually(local_player, EXPECTED_CLIENT_POSITION)
+	await create_timer(0.15).timeout
 	expedition.call("_request_door_toggle", test_door)
 	print("CLIENT_DOOR_REQUESTED | O cliente próximo pediu a abertura da porta norte")
+
+func _move_player_gradually(player: CharacterBody3D, target: Vector3) -> void:
+	# Respeita o limite de deslocação validado pelo anfitrião em cada pacote de rede.
+	while player.global_position.distance_to(target) > 0.02:
+		var offset := target - player.global_position
+		player.global_position += offset.normalized() * minf(0.15, offset.length())
+		await create_timer(0.05).timeout
+	player.global_position = target
+	await create_timer(0.1).timeout
 
 func _watch_server_replication() -> void:
 	for attempt in range(80):
