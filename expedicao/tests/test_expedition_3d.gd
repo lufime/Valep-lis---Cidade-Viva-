@@ -57,6 +57,7 @@ func _run_tests() -> void:
 	await _test_player_navigation(scene, player)
 	await _test_outer_wall_collisions(player)
 	await _test_keyboard_movement(player)
+	await _test_mouse_look_and_capture(player)
 	await _test_main_menu()
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
@@ -159,6 +160,45 @@ func _test_key_direction(
 	var final_value: float = player.position.x if axis == "x" else player.position.z
 	var moved_in_expected_direction: bool = final_value > 0.25 if toward_positive else final_value < -0.25
 	_check(moved_in_expected_direction, "A tecla " + key_name + " move o jogador na direção esperada")
+
+func _test_mouse_look_and_capture(player: CharacterBody3D) -> void:
+	var camera := player.get_node_or_null("PlayerCamera") as Camera3D
+	_check(camera != null, "A câmara está disponível para testar a rotação pelo rato")
+	if camera == null:
+		return
+
+	player.set_physics_process(false)
+	player.rotation = Vector3.ZERO
+	player.set("pitch", 0.0)
+	camera.rotation = Vector3.ZERO
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+	var motion := InputEventMouseMotion.new()
+	motion.relative = Vector2(50, 50)
+	player.call("_unhandled_input", motion)
+	_check(absf(player.rotation.y + 0.11) < 0.001, "O movimento horizontal do rato roda o jogador")
+	_check(absf(float(player.get("pitch")) + 0.11) < 0.001, "O movimento vertical do rato altera a inclinação da vista")
+	_check(absf(camera.rotation.x - float(player.get("pitch"))) < 0.001, "A câmara acompanha a inclinação do rato")
+
+	motion.relative = Vector2(0, 10000)
+	player.call("_unhandled_input", motion)
+	_check(absf(float(player.get("pitch")) + 1.35) < 0.001, "A vista não ultrapassa o limite inferior de inclinação")
+	motion.relative = Vector2(0, -10000)
+	player.call("_unhandled_input", motion)
+	_check(absf(float(player.get("pitch")) - 1.35) < 0.001, "A vista não ultrapassa o limite superior de inclinação")
+
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.physical_keycode = KEY_ESCAPE
+	escape.pressed = true
+	player.call("_unhandled_input", escape)
+	_check(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "ESC liberta o rato")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	player.call("_unhandled_input", click)
+	_check(Input.mouse_mode == Input.MOUSE_MODE_CAPTURED, "O clique esquerdo volta a capturar o rato")
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func _test_main_menu() -> void:
 	var menu_scene := load("res://scenes/main.tscn") as PackedScene
