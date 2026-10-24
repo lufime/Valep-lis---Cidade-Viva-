@@ -437,9 +437,14 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var avatar := scene.get_node_or_null("RemotePlayer_42") as Node3D
 	_check(avatar != null, "Um jogador remoto cria uma representação visual")
 	if avatar != null:
+		var initial_position := avatar.global_position
 		scene.call("_apply_remote_position", 42, Vector3(4, 0.1, 5), 1.0, 0.2)
-		_check(avatar.global_position.distance_to(Vector3(4, 0.1, 5)) < 0.001, "A posição recebida atualiza o avatar remoto")
-		_check(absf(avatar.rotation.y - 1.0) < 0.001, "A orientação recebida atualiza o avatar remoto")
+		_check((scene.get("_remote_targets") as Dictionary).has(42), "A posição recebida fica definida como destino de movimento")
+		scene.call("_process", 0.05)
+		_check(avatar.global_position.distance_to(initial_position) > 0.1 and avatar.global_position.distance_to(Vector3(4, 0.1, 5)) > 0.1, "O avatar remoto aproxima-se do destino sem saltar diretamente")
+		scene.call("_process", 1.0)
+		_check(avatar.global_position.distance_to(Vector3(4, 0.1, 5)) < 0.001, "O avatar remoto converge para a posição recebida")
+		_check(absf(avatar.rotation.y - 1.0) < 0.001, "A orientação recebida é interpolada até ao destino")
 	scene.call("_apply_door_state", "DoorToNorth", true)
 	_check(bool(door.get_meta("open", false)), "O estado remoto abre a porta no cenário")
 	_check(absf(wrapf(door.rotation.y - float(door.get_meta("closed_yaw")), -PI, PI)) > 0.1, "A porta replica a rotação aberta")

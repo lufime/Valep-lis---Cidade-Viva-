@@ -7,10 +7,19 @@ const PLAYER_SYNC_INTERVAL := 0.05
 
 var _local_player: CharacterBody3D
 var _remote_players: Dictionary = {}
+var _remote_targets: Dictionary = {}
 var _player_states: Dictionary = {}
 var _sync_elapsed := 0.0
 
 func _process(delta: float) -> void:
+	var blend := 1.0 - exp(-12.0 * delta)
+	for remote_id in _remote_targets.keys():
+		var remote_avatar := _remote_players.get(remote_id) as Node3D
+		if not is_instance_valid(remote_avatar):
+			continue
+		var target: Dictionary = _remote_targets[remote_id]
+		remote_avatar.global_position = remote_avatar.global_position.lerp(target.position, blend)
+		remote_avatar.rotation.y = lerp_angle(remote_avatar.rotation.y, float(target.yaw), blend)
 	if not is_instance_valid(_local_player):
 		return
 	_sync_elapsed += delta
@@ -73,6 +82,7 @@ func _add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: floa
 		_remote_players[peer_id] = avatar
 	avatar.global_position = position
 	avatar.rotation.y = yaw
+	_remote_targets[peer_id] = state
 
 @rpc("any_peer", "call_remote", "unreliable")
 func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
@@ -92,9 +102,12 @@ func _broadcast_player_state(peer_id: int, state: Dictionary) -> void:
 		_rpc_sync_player.rpc(peer_id, state.position, float(state.yaw), float(state.pitch))
 
 func _apply_remote_position(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
-	_player_states[peer_id] = {"position": position, "yaw": yaw, "pitch": pitch}
+	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	var had_target: bool = _remote_targets.has(peer_id)
+	_player_states[peer_id] = state
+	_remote_targets[peer_id] = state
 	var avatar := _remote_players.get(peer_id) as Node3D
-	if is_instance_valid(avatar):
+	if is_instance_valid(avatar) and not had_target:
 		avatar.global_position = position
 		avatar.rotation.y = yaw
 
