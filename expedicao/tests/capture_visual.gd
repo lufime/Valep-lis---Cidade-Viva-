@@ -23,6 +23,11 @@ func _capture_scene() -> void:
 		quit(1)
 		return
 	camera.current = true
+
+	# A captura de validação mostra as três ligações abertas para que os vãos
+	# não sejam confundidos com portas bloqueadas na imagem estática.
+	for door_name in ["DoorToNorth", "DoorToEast", "DoorToSouth"]:
+		scene.call("_apply_door_state", door_name, true)
 	for frame in range(30):
 		await process_frame
 	var image := get_root().get_texture().get_image()
