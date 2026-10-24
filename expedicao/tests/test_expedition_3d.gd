@@ -53,7 +53,33 @@ func _run_tests() -> void:
 		Vector3(0, 0.1, 3.5), Vector3(0, 0, 0.1)
 	)
 
+	await _test_main_menu()
 	_finish()
+
+func _test_main_menu() -> void:
+	var menu_scene := load("res://scenes/main.tscn") as PackedScene
+	_check(menu_scene != null, "O menu principal deve carregar como PackedScene")
+	if menu_scene == null:
+		return
+	var menu := menu_scene.instantiate() as Control
+	root.add_child(menu)
+	await process_frame
+	_check(menu.get("start_expedition_button") is Button, "O menu deve criar o botão para iniciar a expedição")
+	_check(menu.get("host_button") is Button, "O menu deve criar o botão para criar sala")
+	_check(menu.get("join_button") is Button, "O menu deve criar o botão para entrar numa sala")
+	_check(menu.get("disconnect_button") is Button, "O menu deve criar o botão para desligar")
+	_check(menu.get("status_label") is Label, "O menu deve apresentar o estado da ligação")
+	_check(menu.get("players_label") is Label, "O menu deve apresentar a contagem de jogadores")
+	menu.call("_host_game")
+	await process_frame
+	_check(menu.multiplayer.is_server(), "Criar sala deve iniciar um servidor ENet local")
+	_check(not (menu.get("disconnect_button") as Button).disabled, "O botão desligar deve ficar ativo após criar sala")
+	menu.call("_disconnect_game")
+	await process_frame
+	_check(menu.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Desligar deve repor o modo offline")
+	_check((menu.get("host_button") as Button).disabled == false, "O botão criar sala deve reativar após desligar")
+	menu.queue_free()
+	await process_frame
 
 func _test_door_passage(
 	scene: Node3D,
