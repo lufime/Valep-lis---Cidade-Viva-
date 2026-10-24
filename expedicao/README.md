@@ -9,30 +9,32 @@ Esta pasta é uma reconstrução inicial e isolada do projeto. Não substitui ne
 
 ## O que existe nesta base
 
-- Menu inicial com interface ENet para tentar criar uma sala ou ligar a um anfitrião por IP.
-- Protótipo 3D de bloco cinzento com sala central e três zonas adjacentes: norte, este e sul.
+- Menu inicial com opções para iniciar a expedição, criar uma sala ENet local, ligar a um anfitrião por IP e desligar.
+- Protótipo 3D com sala central e três zonas adjacentes: norte, este e sul.
 - Jogador local em primeira pessoa, movimento por WASD e olhar pelo rato.
-- Três portas com colisão física, interação por E e pivô colocado na extremidade para não bloquear a linha de passagem quando abertas.
-- Testes automatizados para carregamento da cena, presença das zonas, deteção das portas, abertura/fecho, bloqueio quando fechadas e passagem física do corpo do jogador quando abertas.
+- Três portas com colisão física, interação por E e passagem física testada quando abertas.
+- Modelo humanoide GLB com esqueleto e clips de repouso, caminhada e corrida para representações remotas.
+- Replicação técnica de posições/orientações e estado das portas, com teste ENet local de ligação e desconexão.
+- Limpeza do avatar e do estado transitório quando um jogador se desconecta.
+- Teste gráfico separado com eventos sintéticos para captura inicial do rato, ESC para libertar e clique esquerdo para recapturar.
 
-Este é apenas um protótipo técnico. **Não é ainda uma versão jogável completa nem tem arte 3D realista.**
+Este é apenas um protótipo técnico. **Não é ainda uma versão jogável completa nem tem arte 3D final/realista.**
 
-## Limitações conhecidas
+## Limitações e riscos conhecidos
 
-- A interface ENet tenta estabelecer ligações e mostra contagem de ligações, mas não sincroniza ainda o cenário nem as ações de jogo entre jogadores.
-- Não existem ainda modelos finais, animações, criatura, IA da criatura, sistema do traidor, objetivos secretos, inventário ou missões.
+- A rede é apenas uma base técnica: não existe sincronização completa de todas as ações, sistemas e estado do mundo, nem relay, matchmaking ou servidor dedicado.
+- **Risco de autoridade/segurança por resolver:** o servidor recebe posição e orientação declaradas pelo cliente e usa a posição guardada para validar a proximidade de uma porta. Um cliente modificado pode tentar falsificar a sua posição; a validação de portas não deve ser considerada segura contra batota até existir movimento autoritativo no servidor e um teste específico contra falsificação.
+- Não existem ainda a criatura de jogo, IA da criatura, sistema do traidor, objetivos secretos, inventário ou missões funcionais.
 - A criatura deve estar presente em todas as partidas e ser controlada exclusivamente pela IA.
 - O traidor deve ser um jogador humano distinto, informado em privado e com objetivos secretos.
 - A introdução pública não pode revelar a identidade do traidor nem a natureza da criatura.
-- Para jogar através da Internet, é necessário um anfitrião acessível e configuração de rede. Esta base não fornece relay, matchmaking ou servidor dedicado.
-- A permissão de Internet e as predefinições de exportação Android ainda precisam de ser verificadas antes de produzir um APK.
+- A permissão de Internet e as predefinições de exportação Android ainda precisam de ser verificadas antes de produzir e validar um APK.
+- O teste de rato físico real permanece omitido no CI porque o runner não dispõe de um dispositivo físico. O teste gráfico usa eventos sintéticos e não substitui o ensaio num computador/dispositivo real.
 
 ## PRE-FLIGHT
 
-O workflow `.github/workflows/expedicao-preflight.yml` executa Godot 4.5 em modo headless para:
-1. importar e analisar o projeto;
-2. verificar o arranque do projeto;
-3. carregar diretamente a cena 3D;
-4. executar os testes funcionais de portas e passagens.
+O workflow `.github/workflows/expedicao-preflight.yml` executa Godot 4.5 e verifica importação/análise, arranque, cenas, portas e passagens, movimento, animações e testes ENet locais.
 
-Última execução verde verificada antes das alterações atuais: [40110891741](https://github.com/lufime/Valep-lis---Cidade-Viva-/actions/runs/40110891741), no commit `ce94254b990c3fa7f44c6d2fce30a79964c49587` (138 PASS, 0 FAIL, 2 SKIP). As alterações posteriores ainda precisam de uma nova execução verde. Este resultado confirma apenas os testes automatizados enumerados acima; não confirma a conclusão dos sistemas de jogo ainda ausentes.
+Última execução verde verificada: [40113312370](https://github.com/lufime/Valep-lis---Cidade-Viva-/actions/runs/40113312370), no commit `18be1d3e80c4de367fd2820aadff6e04bc51410f`: **144 PASS, 0 FAIL, 1 SKIP**, repetido em três rondas de estabilidade. O teste gráfico separado confirmou `GUI_INPUT_PASS=3 GUI_INPUT_FAIL=0 RESULTADO=PASS`.
+
+Este resultado confirma apenas os testes automatizados efetivamente executados. Não confirma que os sistemas de jogo em falta estejam implementados, que a rede esteja segura contra clientes maliciosos, nem que o APK Android esteja pronto.
