@@ -45,16 +45,6 @@ jobs:
           yes | "$sdkmanager_bin" --licenses >/dev/null || true
           "$sdkmanager_bin" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Instalar componentes Android
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdk_path="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$sdk_path"
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          echo "ANDROID_HOME=$sdk_path" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$sdk_path" >> "$GITHUB_ENV"
-
       - name: Instalar Godot 4.5 e modelos oficiais de exportação
         shell: bash
         run: |
