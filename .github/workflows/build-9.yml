@@ -268,6 +268,31 @@ jobs:
           print("PASS: todos os ficheiros são <=25 MiB ou estão explicitamente configurados em .gitattributes para Git LFS.")
           PY
 
+      - name: Auditar cenas, portas e ligações entre zonas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$PROJECT_DIR" <<'PY'
+          import pathlib, re, sys
+          root = pathlib.Path(sys.argv[1])
+          patterns = re.compile(r"door|portal|zone|room|corridor|passage|transition|connect|exit|entrance|porta|sala|zona|corredor|passagem|ligação", re.I)
+          files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in {".tscn", ".gd", ".tres"} and ".godot" not in p.parts]
+          print(f"SCENE_SCRIPT_FILES={len(files)}")
+          hits = 0
+          for p in files:
+              try:
+                  lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+              except OSError:
+                  continue
+              matches = [(i, line.strip()) for i, line in enumerate(lines, 1) if patterns.search(line)]
+              if matches:
+                  print(f"--- {p.relative_to(root)} ({len(matches)} correspondências) ---")
+                  for i, line in matches[:45]:
+                      print(f"{i}: {line[:240]}")
+                      hits += 1
+          print(f"DOOR_ZONE_REFERENCE_LINES={hits}")
+          PY
+
       - name: Verificar ficheiros essenciais e versão
         shell: bash
         run: |
