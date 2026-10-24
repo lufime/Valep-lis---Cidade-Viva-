@@ -501,6 +501,16 @@ func _test_movement_validation(scene: Node3D) -> void:
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(INF, 0.0, 0.0), 0.05)), "A validação de movimento rejeita coordenadas não finitas")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), -1.0)), "A validação de movimento rejeita intervalo temporal inválido")
 	_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, 0), Vector3(0.2, 0.1, 0))), "A validação física aceita deslocação numa zona desimpedida")
+	_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0, 0), Vector3(0, 0, -0.15)), "A cápsula permite movimento horizontal à altura real do chão")
+	var previous := Vector3(0.0, 0.0, 0.0)
+	var blocked_step := -1
+	for step in range(1, 23):
+		var target := Vector3(0.0, 0.0, -3.2 * float(step) / 22.0)
+		if not bool(scene.call("_is_movement_path_clear", previous, target)):
+			blocked_step = step
+			break
+		previous = target
+	_check(blocked_step == -1, "A cápsula permite o percurso normal até à zona da porta (passo bloqueado: %d)" % blocked_step)
 	_check(not bool(scene.call("_is_movement_path_clear", Vector3(4.3, 0.1, 3.0), Vector3(5.2, 0.1, 3.0))), "A cápsula física rejeita movimento através de uma parede")
 	var north_door := scene.get_node_or_null("DoorToNorth") as Node3D
 	_check(north_door != null, "A porta norte existe para validar a trajetória física")
