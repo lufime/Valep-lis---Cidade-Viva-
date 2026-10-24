@@ -37,10 +37,16 @@ func _process(delta: float) -> void:
 	if _sync_elapsed < PLAYER_SYNC_INTERVAL:
 		return
 	_sync_elapsed = 0.0
-	var peer_id := multiplayer.get_unique_id()
+	var active_peer := multiplayer.multiplayer_peer
+	var connection_active := active_peer != null and active_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+	# A ligação pode cair enquanto a cena continua a processar frames. Não consultar
+	# get_unique_id() quando o peer ENet já não está ativo.
+	var peer_id := 1
+	if connection_active:
+		peer_id = multiplayer.get_unique_id()
 	var state := {"position": _local_player.global_position, "yaw": _local_player.rotation.y, "pitch": float(_local_player.get("pitch"))}
 	_player_states[peer_id] = state
-	if multiplayer.multiplayer_peer == null or multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+	if not connection_active:
 		return
 	if multiplayer.is_server():
 		_broadcast_player_state(peer_id, state)
@@ -438,7 +444,11 @@ func _ready() -> void:
 	player.position = Vector3(0, 0.1, 0)
 	add_child(player)
 	_local_player = player
-	_player_states[multiplayer.get_unique_id()] = {"position": player.position, "yaw": player.rotation.y, "pitch": 0.0}
+	var initial_peer_id := 1
+	var initial_peer := multiplayer.multiplayer_peer
+	if initial_peer != null and initial_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		initial_peer_id = multiplayer.get_unique_id()
+	_player_states[initial_peer_id] = {"position": player.position, "yaw": player.rotation.y, "pitch": 0.0}
 	_build_hud()
 	_build_creature()
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not multiplayer.is_server():
@@ -710,6 +720,6 @@ func _build_hud() -> void:
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(info)
 	var note := Label.new()
-	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Rede técnica (avatares/portas) em validação. IA da criatura ainda não implementada."
+	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Rede técnica (avatares/portas) em validação. Criatura IA: protótipo de patrulha/perseguição; ataque e objetivos de jogo ainda por implementar."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(note)

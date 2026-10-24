@@ -40,6 +40,8 @@ func _run_tests() -> void:
 		return
 
 	player.set_physics_process(false)
+	if creature != null:
+		await _test_creature_ai(scene, creature, player)
 	_check(scene.has_node("LocalPlayer/PlayerCamera"), "O jogador deve ter câmara em primeira pessoa")
 
 	await _test_door_passage(
@@ -74,6 +76,24 @@ func _run_tests() -> void:
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
 	_finish()
+
+func _test_creature_ai(scene: Node3D, creature: CharacterBody3D, player: CharacterBody3D) -> void:
+	var creature_script := creature.get_script() as Script
+	_check(creature_script != null and creature_script.resource_path == "res://scripts/creature_ai.gd", "A criatura deve usar o controlador IA dedicado, não controlos do jogador")
+	player.global_position = Vector3.ZERO
+	await physics_frame
+	var near_state := String(creature.get("state"))
+	_check(near_state == "chase" or near_state == "attack", "A criatura deve detetar o jogador dentro do raio de proximidade")
+	player.global_position = creature.global_position + Vector3(0.0, 0.0, 0.5)
+	await physics_frame
+	_check(String(creature.get("state")) == "attack", "A IA deve entrar no estado de ataque quando o jogador está à distância de ataque")
+	player.global_position = creature.global_position + Vector3(100.0, 0.0, 100.0)
+	await physics_frame
+	_check(String(creature.get("state")) == "patrol", "A IA deve regressar à patrulha quando o jogador está fora do raio de deteção")
+	player.global_position = Vector3.ZERO
+	await physics_frame
+	var return_state := String(creature.get("state"))
+	_check(return_state == "chase" or return_state == "attack", "A IA deve voltar a detetar o jogador quando este regressa à área")
 
 func _test_connector_floor_support(scene: Node3D, player: CharacterBody3D) -> void:
 	var connectors := [
@@ -651,9 +671,10 @@ func _test_hud_status(scene: Node3D) -> void:
 	var status_note: Label
 	for item in labels:
 		var label := item as Label
-		if label != null and label.text.contains("IA da criatura ainda não implementada"):
+		if label != null and label.text.contains("Criatura IA: protótipo de patrulha/perseguição"):
 			status_note = label
 			break
-	_check(status_note != null, "O HUD deve declarar explicitamente que a IA da criatura ainda não está implementada")
+	_check(status_note != null, "O HUD deve identificar a IA da criatura como protótipo, sem a apresentar como concluída")
 	if status_note != null:
-		_check(status_note.text.contains("Rede técnica") and status_note.text.contains("em validação"), "O HUD deve distinguir a rede técnica em validação da IA ainda não implementada")
+		_check(status_note.text.contains("Rede técnica") and status_note.text.contains("em validação"), "O HUD deve assinalar a rede técnica ainda em validação")
+		_check(status_note.text.contains("ataque e objetivos de jogo ainda por implementar"), "O HUD deve declarar que o ataque e os objetivos de jogo ainda não estão implementados")
