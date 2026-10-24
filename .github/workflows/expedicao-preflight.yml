@@ -180,6 +180,8 @@ jobs:
           grep -q "CLIENT_DOOR_REPLICATION_PASS" "$client_log"
           grep -q "SERVER_DOOR_CLOSE_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_DOOR_CLOSE_REPLICATION_PASS" "$client_log"
+          grep -q "CLIENT_TELEPORT_ATTEMPT_SENT" "$client_log"
+          grep -q "SERVER_TELEPORT_REJECT_PASS" "$server_log"
 
       - name: Repetir testes funcionais em ciclo de estabilidade
         shell: bash

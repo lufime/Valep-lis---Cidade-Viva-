@@ -169,7 +169,18 @@ func _watch_server_replication() -> void:
 							if is_instance_valid(test_door) and not bool(test_door.get_meta("open", true)):
 								print("SERVER_DOOR_CLOSE_REPLICATION_PASS | O anfitrião aplicou o pedido de fecho do cliente")
 								probe.rpc_id(int(peer_id), "close_replication_ack")
-								await create_timer(0.5).timeout
+								await create_timer(0.45).timeout
+								var final_states: Dictionary = expedition.get("_player_states")
+								if not final_states.has(peer_id):
+									_fail("O anfitrião perdeu o estado do cliente após a tentativa de teletransporte.")
+									return
+								var final_state: Dictionary = final_states[peer_id]
+								var final_position: Vector3 = final_state.position
+								if final_position.distance_to(EXPECTED_CLIENT_POSITION) > 0.6:
+									_fail("O anfitrião aceitou uma posição teletransportada do cliente: %s" % final_position)
+									return
+								print("SERVER_TELEPORT_REJECT_PASS | O anfitrião manteve a última posição válida após o pedido de teletransporte")
+								await create_timer(0.05).timeout
 								quit(0)
 								return
 						_fail("O anfitrião não recebeu nem aplicou o pedido de fecho da porta do cliente.")
