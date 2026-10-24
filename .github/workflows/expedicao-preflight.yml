@@ -82,6 +82,23 @@ jobs:
           /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
             --headless --path expedicao res://scenes/expedition_3d.tscn --quit-after 5
 
+      - name: Capturar imagem da cena 3D com rendering por software
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xvfb-run
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
+            --path expedicao --script res://tests/capture_visual.gd
+          test -s /tmp/expedition-showcase.png
+
+      - name: Publicar captura da cena 3D
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-ultima-expedicao-captura-grafica
+          path: /tmp/expedition-showcase.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Testes funcionais da cena 3D e das portas
         shell: bash
         run: |
