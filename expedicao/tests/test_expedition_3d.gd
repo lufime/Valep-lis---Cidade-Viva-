@@ -56,6 +56,7 @@ func _run_tests() -> void:
 	await _test_player_navigation(scene, player)
 	await _test_main_menu()
 	await _test_multiplayer_connection()
+	await _test_start_expedition_button()
 	_finish()
 
 func _test_player_navigation(scene: Node3D, player: CharacterBody3D) -> void:
@@ -92,6 +93,25 @@ func _test_main_menu() -> void:
 	await process_frame
 	_check(menu.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Desligar deve repor o modo offline")
 	_check((menu.get("host_button") as Button).disabled == false, "O botão criar sala deve reativar após desligar")
+	menu.queue_free()
+	await process_frame
+
+func _test_start_expedition_button() -> void:
+	var menu_scene := load("res://scenes/main.tscn") as PackedScene
+	_check(menu_scene != null, "O menu está disponível para testar o botão iniciar")
+	if menu_scene == null:
+		return
+	var menu := menu_scene.instantiate() as Control
+	root.add_child(menu)
+	await process_frame
+	var start_button := menu.get("start_expedition_button") as Button
+	_check(start_button != null, "O botão iniciar está disponível")
+	if start_button != null:
+		start_button.pressed.emit()
+		await process_frame
+		await process_frame
+		var current := current_scene
+		_check(current != null and current.scene_file_path == "res://scenes/expedition_3d.tscn", "O botão iniciar abre a cena de expedição 3D")
 	menu.queue_free()
 	await process_frame
 
@@ -256,7 +276,7 @@ func _check(condition: bool, message: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("RESULTADO=PASS | Cena, portas e passagens físicas, navegação/colisão do jogador, menu e ligação ENet local passaram.")
+		print("RESULTADO=PASS | Cena, portas/passagens, navegação/colisão, menu, transição para a expedição e ligação ENet local passaram.")
 		quit(0)
 	else:
 		push_error("RESULTADO=FAIL | ", failures.size(), " teste(s) falharam.")
