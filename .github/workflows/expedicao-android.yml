@@ -114,7 +114,7 @@ jobs:
           set -euo pipefail
           mkdir -p build
           /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
-            --headless --path expedicao \
+            --verbose --headless --path expedicao \
             --export-debug "Android APK" "$GITHUB_WORKSPACE/build/A-Ultima-Expedicao-debug.apk"
           test -s build/A-Ultima-Expedicao-debug.apk
           unzip -t build/A-Ultima-Expedicao-debug.apk
