@@ -37,17 +37,20 @@ func _run_tests() -> void:
 	await _test_door_passage(
 		scene, player, "DoorToNorth", "norte",
 		Vector3(0, 0.1, -3.2), 0.0,
-		Vector3(0, 1.0, -3.5), Vector3(0, 1.0, -6.5)
+		Vector3(0, 1.0, -3.5), Vector3(0, 1.0, -6.5),
+		Vector3(0, 0.1, -3.5), Vector3(0, 0, -0.1)
 	)
 	await _test_door_passage(
 		scene, player, "DoorToEast", "este",
 		Vector3(3.2, 0.1, 0), -PI / 2.0,
-		Vector3(3.5, 1.0, 0), Vector3(6.5, 1.0, 0)
+		Vector3(3.5, 1.0, 0), Vector3(6.5, 1.0, 0),
+		Vector3(3.5, 0.1, 0), Vector3(0.1, 0, 0)
 	)
 	await _test_door_passage(
 		scene, player, "DoorToSouth", "sul",
 		Vector3(0, 0.1, 3.2), PI,
-		Vector3(0, 1.0, 3.5), Vector3(0, 1.0, 6.5)
+		Vector3(0, 1.0, 3.5), Vector3(0, 1.0, 6.5),
+		Vector3(0, 0.1, 3.5), Vector3(0, 0, 0.1)
 	)
 
 	_finish()
@@ -60,7 +63,9 @@ func _test_door_passage(
 	player_position: Vector3,
 	player_yaw: float,
 	ray_from: Vector3,
-	ray_to: Vector3
+	ray_to: Vector3,
+	traversal_start: Vector3,
+	traversal_motion: Vector3
 ) -> void:
 	var door := scene.get_node_or_null(door_name) as Node3D
 	if door == null:
@@ -76,6 +81,10 @@ func _test_door_passage(
 	var closed_hit := _raycast(scene, player, ray_from, ray_to)
 	_check(_is_door_hit(closed_hit), "A porta " + direction_name + " bloqueia a passagem quando fechada")
 
+	player.position = traversal_start
+	_walk_steps(player, traversal_motion, 40)
+	_check(not _crossed_doorway(direction_name, player.position), "O corpo do jogador não atravessa a porta " + direction_name + " fechada")
+
 	var initial_yaw: float = door.rotation.y
 	player.set("nearby_door", door)
 	player.call("_interact")
@@ -87,6 +96,11 @@ func _test_door_passage(
 	var open_hit := _raycast(scene, player, ray_from, ray_to)
 	_check(open_hit.is_empty(), "A passagem " + direction_name + " fica desimpedida com a porta aberta")
 
+	player.position = traversal_start
+	_walk_steps(player, traversal_motion, 40)
+	_check(_crossed_doorway(direction_name, player.position), "O corpo do jogador atravessa fisicamente a porta " + direction_name + " aberta")
+
+	player.set("nearby_door", door)
 	player.call("_interact")
 	await physics_frame
 	await physics_frame
@@ -95,6 +109,22 @@ func _test_door_passage(
 
 	var closed_again_hit := _raycast(scene, player, ray_from, ray_to)
 	_check(_is_door_hit(closed_again_hit), "A passagem " + direction_name + " volta a ficar bloqueada ao fechar")
+
+func _walk_steps(player: CharacterBody3D, motion: Vector3, steps: int) -> void:
+	for i in range(steps):
+		var collision := player.move_and_collide(motion)
+		if collision != null:
+			break
+
+func _crossed_doorway(direction_name: String, position: Vector3) -> bool:
+	match direction_name:
+		"norte":
+			return position.z < -5.5
+		"este":
+			return position.x > 5.5
+		"sul":
+			return position.z > 5.5
+	return false
 
 func _raycast(scene: Node3D, player: CharacterBody3D, ray_from: Vector3, ray_to: Vector3) -> Dictionary:
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
@@ -116,7 +146,7 @@ func _check(condition: bool, message: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("RESULTADO=PASS | Todas as verificações da cena 3D, deteção das portas e passagens passaram.")
+		print("RESULTADO=PASS | Cena, deteção, abertura/fecho e passagem física pelas três portas passaram.")
 		quit(0)
 	else:
 		push_error("RESULTADO=FAIL | ", failures.size(), " teste(s) falharam.")
