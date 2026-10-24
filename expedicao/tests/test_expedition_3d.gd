@@ -230,6 +230,9 @@ func _test_door_passage(
 	_walk_steps(player, traversal_motion, 40)
 	_check(_crossed_doorway(direction_name, player.position), "O corpo do jogador atravessa fisicamente a porta " + direction_name + " aberta")
 
+	_walk_steps(player, -traversal_motion, 40)
+	_check(_returned_to_central(direction_name, player.position), "O jogador regressa fisicamente à sala central pela porta " + direction_name)
+
 	player.set("nearby_door", door)
 	player.call("_interact")
 	await physics_frame
@@ -254,6 +257,16 @@ func _crossed_doorway(direction_name: String, position: Vector3) -> bool:
 			return position.x > 5.5
 		"sul":
 			return position.z > 5.5
+	return false
+
+func _returned_to_central(direction_name: String, position: Vector3) -> bool:
+	match direction_name:
+		"norte":
+			return position.z > -5.5
+		"este":
+			return position.x < 5.5
+		"sul":
+			return position.z < 5.5
 	return false
 
 func _raycast(scene: Node3D, player: CharacterBody3D, ray_from: Vector3, ray_to: Vector3) -> Dictionary:
