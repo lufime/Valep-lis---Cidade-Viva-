@@ -180,6 +180,8 @@ jobs:
           cat "$client_log"
           grep -q "SERVER_PASS" "$server_log"
           grep -q "CLIENT_PASS" "$client_log"
+          grep -q "CLIENT_INITIAL_POSITION_SPOOF_SENT" "$client_log"
+          grep -q "SERVER_INITIAL_SPAWN_PASS" "$server_log"
           grep -q "SERVER_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_REPLICATION_PASS" "$client_log"
           grep -q "CLIENT_REMOTE_PLAYER_PASS" "$client_log"
@@ -189,6 +191,8 @@ jobs:
           grep -q "CLIENT_DOOR_REPLICATION_PASS" "$client_log"
           grep -q "SERVER_DOOR_CLOSE_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_DOOR_CLOSE_REPLICATION_PASS" "$client_log"
+          grep -q "CLIENT_MOVEMENT_BURST_SENT" "$client_log"
+          grep -q "SERVER_BURST_RATE_LIMIT_PASS" "$server_log"
           grep -q "CLIENT_TELEPORT_ATTEMPT_SENT" "$client_log"
           grep -q "SERVER_TELEPORT_REJECT_PASS" "$server_log"
           grep -q "CLIENT_TELEPORT_REJECT_ACK_PASS" "$client_log"
@@ -204,7 +208,21 @@ jobs:
           godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
           for iteration in 1 2 3; do
             echo "STABILITY_LOOP_START | round=$iteration/3"
-            timeout --signal=TERM --kill-after=5s 60s \
-              "$godot_bin" --headless --path expedicao --script res://tests/test_expedition_3d.gd
+            test_log="$(mktemp)"
+            if ! timeout --signal=TERM --kill-after=5s 60s \
+              "$godot_bin" --headless --path expedicao --script res://tests/test_expedition_3d.gd 2>&1 | tee "$test_log"; then
+              echo "FAIL | A suite funcional falhou na ronda $iteration."
+              cat "$test_log"
+              exit 1
+            fi
+            if grep -E "^(ERROR:|SCRIPT ERROR:|Parse Error:)" "$test_log"; then
+              echo "FAIL | A ronda $iteration contém erros do motor ou do GDScript."
+              exit 1
+            fi
+            if ! grep -qE "TOTAL_PASS=[0-9]+ TOTAL_FAIL=0 TOTAL_SKIP=[0-9]+ RESULTADO=PASS" "$test_log"; then
+              echo "FAIL | A ronda $iteration não confirmou uma contagem PASS sem falhas."
+              exit 1
+            fi
+            rm -f "$test_log"
             echo "STABILITY_LOOP_PASS | round=$iteration/3"
           done

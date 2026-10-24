@@ -493,6 +493,10 @@ func _test_rpc_authority() -> void:
 func _test_movement_validation(scene: Node3D) -> void:
 	var start := Vector3.ZERO
 	_check(bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), 0.05)), "A validação de movimento aceita deslocação curta plausível")
+	_check(bool(scene.call("_is_client_movement_valid", start, Vector3(0.21, 0.0, 0.0), 0.05)), "A validação aceita deslocação compatível com a velocidade normal do jogador")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.25, 0.0, 0.0), 0.05)), "A validação rejeita deslocação acima do limite por pacote")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.05, 0.0, 0.0), 0.01)), "A validação rejeita pacotes de movimento demasiado próximos")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.5, 0.0, 0.0), 5.0)), "Uma pausa longa não acumula margem para teletransporte")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(20.0, 0.0, 0.0), 0.05)), "A validação de movimento rejeita teletransporte num único pacote")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(INF, 0.0, 0.0), 0.05)), "A validação de movimento rejeita coordenadas não finitas")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), -1.0)), "A validação de movimento rejeita intervalo temporal inválido")

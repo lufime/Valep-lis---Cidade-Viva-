@@ -14,7 +14,7 @@ Esta pasta é uma reconstrução inicial e isolada do projeto. Não substitui ne
 - Jogador local em primeira pessoa, movimento por WASD e olhar pelo rato.
 - Três portas com colisão física, interação por E e passagem física testada quando abertas.
 - Modelo humanoide GLB com esqueleto e clips de repouso, caminhada e corrida para representações remotas.
-- Replicação técnica de posições/orientações e estado das portas, com teste ENet local de ligação e desconexão.
+- Replicação técnica de posições/orientações e estado das portas, com validação limitada de cadência/distância, spawn inicial imposto pelo anfitrião e testes ENet entre processos separados.
 - Limpeza do avatar e do estado transitório quando um jogador se desconecta.
 - Teste gráfico separado com eventos sintéticos para captura inicial do rato, ESC para libertar e clique esquerdo para recapturar.
 
@@ -23,7 +23,7 @@ Este é apenas um protótipo técnico. **Não é ainda uma versão jogável comp
 ## Limitações e riscos conhecidos
 
 - A rede é apenas uma base técnica: não existe sincronização completa de todas as ações, sistemas e estado do mundo, nem relay, matchmaking ou servidor dedicado.
-- **Risco de autoridade/segurança por resolver:** o servidor recebe posição e orientação declaradas pelo cliente e usa a posição guardada para validar a proximidade de uma porta. Um cliente modificado pode tentar falsificar a sua posição; a validação de portas não deve ser considerada segura contra batota até existir movimento autoritativo no servidor e um teste específico contra falsificação.
+- **Autoridade/segurança ainda incompleta:** o anfitrião ignora a posição inicial declarada pelo cliente e rejeita pacotes de movimento demasiado próximos ou com deslocação excessiva, mas continua a receber posições calculadas pelo cliente. Ainda não simula o movimento com `CharacterBody3D`, colisões e gravidade no servidor; um cliente modificado pode tentar atravessar paredes em pequenos passos. A mitigação não equivale a movimento plenamente autoritativo nem a proteção completa contra batota.
 - Não existem ainda a criatura de jogo, IA da criatura, sistema do traidor, objetivos secretos, inventário ou missões funcionais.
 - A criatura deve estar presente em todas as partidas e ser controlada exclusivamente pela IA.
 - O traidor deve ser um jogador humano distinto, informado em privado e com objetivos secretos.
@@ -35,6 +35,6 @@ Este é apenas um protótipo técnico. **Não é ainda uma versão jogável comp
 
 O workflow `.github/workflows/expedicao-preflight.yml` executa Godot 4.5 e verifica importação/análise, arranque, cenas, portas e passagens, movimento, animações e testes ENet locais.
 
-Última execução verde verificada: [40113312370](https://github.com/lufime/Valep-lis---Cidade-Viva-/actions/runs/40113312370), no commit `18be1d3e80c4de367fd2820aadff6e04bc51410f`: **144 PASS, 0 FAIL, 1 SKIP**, repetido em três rondas de estabilidade. O teste gráfico separado confirmou `GUI_INPUT_PASS=3 GUI_INPUT_FAIL=0 RESULTADO=PASS`.
+Consultar a execução mais recente de [GitHub Actions nesta branch](https://github.com/lufime/Valep-lis---Cidade-Viva-/actions/workflows/expedicao-preflight.yml?query=branch%3Arebuild%2Fa-ultima-expedicao-zero) e confirmar que o SHA testado corresponde ao HEAD. Cada contagem PASS/FAIL/SKIP só é válida para o commit e os logs dessa execução; uma alteração posterior exige uma nova execução verde.
 
-Este resultado confirma apenas os testes automatizados efetivamente executados. Não confirma que os sistemas de jogo em falta estejam implementados, que a rede esteja segura contra clientes maliciosos, nem que o APK Android esteja pronto.
+O PRE-FLIGHT confirma apenas os testes efetivamente executados. Não confirma que os sistemas de jogo em falta estejam implementados, que a rede esteja segura contra clientes maliciosos, nem que o APK Android esteja pronto.

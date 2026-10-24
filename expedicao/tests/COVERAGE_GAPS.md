@@ -10,7 +10,7 @@ Este documento descreve apenas a base isolada `expedicao/` e não declara o jogo
 - Criação do jogador, câmara, movimento WASD, colisões e rotação matemática da vista.
 - Passagem física de ida e volta pelas três portas (norte, este e sul), apoio do chão nos corredores e bloqueio das paredes.
 - Criação e desligação de uma sala ENet local.
-- Teste de integração com processos Godot separados: ligação, PING/PONG, posição e orientação do anfitrião replicadas para o cliente, posição do cliente recebida pelo anfitrião, criação do avatar remoto, rejeição de pedido de porta por cliente distante, pedido válido de abertura e fecho, e confirmação dos dois estados nos processos anfitrião e cliente.
+- Teste de integração com processos Godot separados: ligação, PING/PONG, posição e orientação do anfitrião replicadas para o cliente, imposição do spawn pelo anfitrião perante uma posição inicial falsificada, posição do cliente recebida pelo anfitrião, criação do avatar remoto, rejeição de pedido de porta por cliente distante, abertura/fecho de porta, rejeição de atualizações de movimento demasiado próximas e rejeição de teletransporte.
 - Preparação do modelo humanoide com clips CC0 e verificações de importação e seleção de animações idle/walk/locomoção rápida.
 - Teste gráfico separado sob Xvfb para as transições de captura inicial do rato, ESC para libertar e clique esquerdo para recapturar; este teste usa eventos sintéticos, não um dispositivo físico.
 
@@ -28,5 +28,7 @@ A árvore atual desta base isolada contém apenas o menu, o cenário de teste, o
 - Sistema de missões e inventário.
 - Exportação/assinatura Android e instalação num dispositivo real.
 - Sincronização multijogador completa do mundo e das ações de jogo para além da posição/orientação dos avatares e do estado das portas.
+
+Além disso, a posição do jogador remoto continua a ser submetida pelo cliente: a validação de cadência/distância e o spawn imposto pelo anfitrião são mitigações, não movimento plenamente autoritativo. O servidor ainda não simula o movimento com colisões/gravidade nem valida cada trajetória contra a geometria; um cliente modificado pode tentar atravessar paredes em pequenos passos.
 
 Estas lacunas exigem implementação e testes próprios antes de poderem receber qualquer estado PASS. Não se deve inferir que estão implementadas porque o PRE-FLIGHT atual fica verde.

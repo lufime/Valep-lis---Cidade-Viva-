@@ -45,6 +45,7 @@ func _start_probe() -> void:
 		var host_states: Dictionary = expedition.get("_player_states")
 		host_states[api.get_unique_id()] = {"position": EXPECTED_HOST_POSITION, "yaw": EXPECTED_HOST_YAW, "pitch": EXPECTED_HOST_PITCH}
 		print("SERVER_READY | À escuta na porta UDP %d" % TEST_PORT)
+		_watch_initial_spawn()
 		_watch_server_replication()
 		create_timer(10.0).timeout.connect(_on_timeout)
 	elif mode == "client":
@@ -73,11 +74,15 @@ func _on_connected_to_server() -> void:
 	print("CLIENT_CONNECTED | Ligação estabelecida; a enviar RPC PING")
 	probe.rpc_id(1, "ping")
 	_create_expedition()
-	await create_timer(0.5).timeout
 	var local_player := expedition.get_node_or_null("LocalPlayer") as CharacterBody3D
 	if local_player == null:
 		_fail("O jogador local não foi criado no cliente.")
 		return
+	# Tenta registar uma posição inicial falsificada; o anfitrião deve impor o spawn.
+	local_player.global_position = Vector3(40.0, 0.1, 40.0)
+	print("CLIENT_INITIAL_POSITION_SPOOF_SENT | A posição declarada no registo é deliberadamente impossível")
+	await create_timer(0.5).timeout
+	local_player.global_position = Vector3(0.0, 0.1, 0.0)
 	await _move_player_gradually(local_player, EXPECTED_CLIENT_POSITION)
 	print("CLIENT_MOVED | Posição de teste enviada gradualmente para replicação")
 	var remote_host: Node3D
@@ -144,6 +149,24 @@ func _move_player_gradually(player: CharacterBody3D, target: Vector3) -> void:
 		horizontal_delta = Vector2(target.x - player.global_position.x, target.z - player.global_position.z)
 	await create_timer(0.1).timeout
 
+func _watch_initial_spawn() -> void:
+	for attempt in range(50):
+		await create_timer(0.05).timeout
+		if not is_instance_valid(expedition):
+			return
+		var states: Dictionary = expedition.get("_player_states")
+		for peer_id in api.get_peers():
+			if not states.has(peer_id):
+				continue
+			var state: Dictionary = states[peer_id]
+			var position: Vector3 = state.position
+			if position.distance_to(Vector3(0.0, 0.1, 0.0)) > 0.05:
+				_fail("O anfitrião aceitou a posição inicial falsificada do cliente: %s" % position)
+				return
+		print("SERVER_INITIAL_SPAWN_PASS | O anfitrião impôs a posição inicial de spawn")
+		return
+	_fail("O anfitrião não registou o jogador remoto no spawn esperado.")
+
 func _watch_server_replication() -> void:
 	for attempt in range(80):
 		await create_timer(0.1).timeout
@@ -176,9 +199,11 @@ func _watch_server_replication() -> void:
 									return
 								var final_state: Dictionary = final_states[peer_id]
 								var final_position: Vector3 = final_state.position
-								if final_position.distance_to(EXPECTED_CLIENT_POSITION) > 0.6:
-									_fail("O anfitrião aceitou uma posição teletransportada do cliente: %s" % final_position)
+								var expected_after_burst := EXPECTED_CLIENT_POSITION + Vector3(0.18, 0.0, 0.0)
+								if final_position.distance_to(expected_after_burst) > 0.12:
+									_fail("O anfitrião aceitou um pacote demasiado rápido ou o teletransporte; posição final: %s" % final_position)
 									return
+								print("SERVER_BURST_RATE_LIMIT_PASS | O anfitrião rejeitou o segundo pacote enviado demasiado cedo")
 								print("SERVER_TELEPORT_REJECT_PASS | O anfitrião manteve a última posição válida após o pedido de teletransporte")
 								probe.rpc_id(int(peer_id), "teleport_reject_ack")
 								await create_timer(0.2).timeout

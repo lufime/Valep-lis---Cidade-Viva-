@@ -35,7 +35,18 @@ func close_replication_ack() -> void:
 		get_tree().quit(1)
 		return
 	print("CLIENT_DOOR_CLOSE_REPLICATION_PASS | O cliente recebeu o estado fechado da porta")
+	var local_player := scene.get_node_or_null("LocalPlayer") as CharacterBody3D
+	if local_player == null:
+		push_error("CLIENT_MOVEMENT_BURST_FAIL | O jogador local não existe para o teste de cadência.")
+		get_tree().quit(1)
+		return
 	var player_id := multiplayer.get_unique_id()
+	var valid_burst_position := local_player.global_position + Vector3(0.18, 0.0, 0.0)
+	var too_fast_position := valid_burst_position + Vector3(0.18, 0.0, 0.0)
+	local_player.global_position = valid_burst_position
+	scene.rpc_id(1, "_rpc_submit_player_state", player_id, valid_burst_position, local_player.rotation.y, float(local_player.get("pitch")))
+	scene.rpc_id(1, "_rpc_submit_player_state", player_id, too_fast_position, local_player.rotation.y, float(local_player.get("pitch")))
+	print("CLIENT_MOVEMENT_BURST_SENT | O cliente enviou dois estados consecutivos sem intervalo suficiente")
 	scene.rpc_id(1, "_rpc_submit_player_state", player_id, Vector3(50.0, 0.1, 50.0), 0.0, 0.0)
 	print("CLIENT_TELEPORT_ATTEMPT_SENT | O cliente enviou uma posição impossível para verificar a rejeição do anfitrião")
 

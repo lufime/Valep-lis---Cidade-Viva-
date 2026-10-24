@@ -4,6 +4,9 @@ const PLAYER_SCENE_SCRIPT := "res://scripts/expedition_player.gd"
 
 const REMOTE_PLAYER_COLOR := Color("#e2a35c")
 const PLAYER_SYNC_INTERVAL := 0.05
+const MIN_CLIENT_SYNC_INTERVAL := 0.045
+const CLIENT_MOVEMENT_SPEED := 4.2
+const CLIENT_MOVEMENT_DISTANCE_TOLERANCE := 0.03
 
 var _local_player: CharacterBody3D
 var _remote_players: Dictionary = {}
@@ -449,11 +452,12 @@ func _on_peer_disconnected(peer_id: int) -> void:
 func _is_client_movement_valid(previous_position: Vector3, new_position: Vector3, elapsed_seconds: float) -> bool:
 	if not is_finite(new_position.x) or not is_finite(new_position.y) or not is_finite(new_position.z):
 		return false
-	if not is_finite(elapsed_seconds) or elapsed_seconds < 0.0:
+	if not is_finite(elapsed_seconds) or elapsed_seconds < MIN_CLIENT_SYNC_INTERVAL:
 		return false
-	# Allow brief network jitter, but reject single-packet teleportation.
-	var bounded_elapsed := clampf(elapsed_seconds, 0.05, 0.35)
-	var maximum_distance := 4.2 * bounded_elapsed + 0.35
+	# A pausa não acumula deslocação disponível; um pacote isolado não pode aproveitar
+	# vários segundos sem movimento para saltar uma grande distância.
+	var bounded_elapsed := minf(elapsed_seconds, PLAYER_SYNC_INTERVAL)
+	var maximum_distance := CLIENT_MOVEMENT_SPEED * bounded_elapsed + CLIENT_MOVEMENT_DISTANCE_TOLERANCE
 	return previous_position.distance_to(new_position) <= maximum_distance
 
 func _build_environment() -> void:
