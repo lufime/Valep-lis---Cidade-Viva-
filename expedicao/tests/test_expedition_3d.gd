@@ -21,25 +21,33 @@ func _run_tests() -> void:
 	_check(scene.get_node_or_null("NorthRoomFloor") != null, "A cena deve criar a zona norte")
 	_check(scene.get_node_or_null("EastRoomFloor") != null, "A cena deve criar a zona este")
 	_check(scene.get_node_or_null("SouthRoomFloor") != null, "A cena deve criar a zona sul")
-	_check(scene.get_node_or_null("DoorToNorth") != null, "A ligação norte deve ter porta")
-	_check(scene.get_node_or_null("DoorToEast") != null, "A ligação este deve ter porta")
-	_check(scene.get_node_or_null("DoorToSouth") != null, "A ligação sul deve ter porta")
 
-	var player := scene.get_node_or_null("LocalPlayer")
-	var door := scene.get_node_or_null("DoorToNorth")
-	if player != null and door != null:
-		player.set("nearby_door", door)
+	var player: Node = scene.get_node_or_null("LocalPlayer")
+	var door_names := ["DoorToNorth", "DoorToEast", "DoorToSouth"]
+	var target_floors := ["NorthRoomFloor", "EastRoomFloor", "SouthRoomFloor"]
+	for i in range(door_names.size()):
+		var door: Node3D = scene.get_node_or_null(door_names[i]) as Node3D
+		_check(door != null, "A ligação " + door_names[i] + " deve ter porta")
+		_check(scene.get_node_or_null(target_floors[i]) != null, "A ligação " + door_names[i] + " deve ter uma zona de destino")
+		if door == null or player == null:
+			continue
+
+		_check(door.has_meta("is_door"), door_names[i] + " deve estar marcada como porta")
+		_check(door.get_node_or_null("DoorCollider") != null, door_names[i] + " deve ter colisão física")
 		var initial_yaw: float = door.rotation.y
+		player.set("nearby_door", door)
 		player.call("_interact")
 		door.force_update_transform()
-		_check(bool(door.get_meta("open", false)), "Interagir deve abrir a porta")
+		_check(bool(door.get_meta("open", false)), door_names[i] + " deve abrir ao interagir")
 		var opened_yaw: float = door.rotation.y
-		print("DEBUG | yaw inicial=", initial_yaw, " yaw aberto=", opened_yaw, " meta closed_yaw=", door.get_meta("closed_yaw", "AUSENTE"))
-		_check(absf(wrapf(opened_yaw - initial_yaw, -PI, PI)) > 0.1, "Abrir deve alterar a rotação da porta")
+		_check(absf(wrapf(opened_yaw - initial_yaw, -PI, PI)) > 0.1, door_names[i] + " deve rodar ao abrir")
+		var collider: Node3D = door.get_node_or_null("DoorCollider") as Node3D
+		if collider != null:
+			_check(collider.global_position.distance_to(door.global_position) < 0.1, door_names[i] + " deve mover a colisão com a porta")
 		player.call("_interact")
 		door.force_update_transform()
-		_check(not bool(door.get_meta("open", true)), "Uma segunda interação deve fechar a porta")
-		_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) < 0.1, "Fechar deve repor a rotação inicial")
+		_check(not bool(door.get_meta("open", true)), door_names[i] + " deve fechar na segunda interação")
+		_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) < 0.1, door_names[i] + " deve regressar à rotação inicial")
 
 	if scene.has_node("LocalPlayer/PlayerCamera"):
 		_check(true, "O jogador deve ter câmara em primeira pessoa")
