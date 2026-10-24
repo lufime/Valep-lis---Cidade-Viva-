@@ -189,8 +189,20 @@ func _test_mouse_look_and_capture(player: CharacterBody3D) -> void:
 	player.call("_apply_mouse_motion", Vector2(0, -10000))
 	_check(absf(float(player.get("pitch")) - 1.35) < 0.001, "A vista respeita o limite superior de inclinação")
 
-	_skip("Captura/libertação do rato por eventos reais", "O runner Godot headless não fornece um dispositivo de rato capturável; este comportamento requer teste gráfico.")
-	_skip("ESC e clique esquerdo para alternar captura do rato", "O estado Input.mouse_mode não é verificável de forma fiável neste runner headless.")
+	var original_mouse_mode := Input.mouse_mode
+	var escape_event := InputEventKey.new()
+	escape_event.keycode = KEY_ESCAPE
+	escape_event.pressed = true
+	player.call("_unhandled_input", escape_event)
+	_check(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "ESC liberta o rato quando o evento chega ao jogador")
+
+	var click_event := InputEventMouseButton.new()
+	click_event.button_index = MOUSE_BUTTON_LEFT
+	click_event.pressed = true
+	player.call("_unhandled_input", click_event)
+	_check(Input.mouse_mode == Input.MOUSE_MODE_CAPTURED, "O clique esquerdo volta a capturar o rato quando o evento chega ao jogador")
+	Input.mouse_mode = original_mouse_mode
+	_skip("Entrada física do rato", "O runner não fornece um dispositivo físico; o movimento real do cursor ainda requer validação gráfica.")
 
 func _test_animation_asset() -> void:
 	# O PRE-FLIGHT gera este GLB a partir da biblioteca CC0; localmente pode não existir.
