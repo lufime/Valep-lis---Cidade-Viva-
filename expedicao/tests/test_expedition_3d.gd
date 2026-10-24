@@ -66,6 +66,7 @@ func _run_tests() -> void:
 	await _test_animation_asset()
 	await _test_main_menu()
 	await _test_multiplayer_replication_helpers(scene)
+	_test_movement_validation(scene)
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
 	_finish()
@@ -480,6 +481,13 @@ func _finish() -> void:
 	else:
 		push_error(summary + " RESULTADO=FAIL")
 		quit(1)
+
+func _test_movement_validation(scene: Node3D) -> void:
+	var start := Vector3.ZERO
+	_check(bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), 0.05)), "A validação de movimento aceita deslocação curta plausível")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(20.0, 0.0, 0.0), 0.05)), "A validação de movimento rejeita teletransporte num único pacote")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(INF, 0.0, 0.0), 0.05)), "A validação de movimento rejeita coordenadas não finitas")
+	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), -1.0)), "A validação de movimento rejeita intervalo temporal inválido")
 
 func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var door := scene.get_node_or_null("DoorToNorth") as Node3D
