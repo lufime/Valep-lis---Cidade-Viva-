@@ -9,6 +9,7 @@ const EXPECTED_HOST_PITCH := 0.22
 var probe: Node
 var api: MultiplayerAPI
 var expedition: Node3D
+var disconnected_peer_id: int = 0
 
 func _initialize() -> void:
 	call_deferred("_start_probe")
@@ -33,6 +34,7 @@ func _start_probe() -> void:
 			_fail("O servidor ENet não arrancou: %s" % server_error)
 			return
 		api.multiplayer_peer = server_peer
+		api.peer_disconnected.connect(_on_probe_peer_disconnected)
 		_create_expedition()
 		var host_player := expedition.get_node_or_null("LocalPlayer") as CharacterBody3D
 		if host_player == null:
@@ -224,6 +226,21 @@ func _watch_server_replication() -> void:
 								for wall_attempt in range(60):
 									await create_timer(0.1).timeout
 									if bool(probe.get("wall_probe_completed")):
+										var target_peer_id := int(peer_id)
+										for disconnect_attempt in range(30):
+											await create_timer(0.1).timeout
+											if disconnected_peer_id == target_peer_id:
+												break
+										if disconnected_peer_id != target_peer_id:
+											_fail("O anfitrião não detetou a desconexão real do cliente.")
+											return
+										var final_states: Dictionary = expedition.get("_player_states")
+										var remote_players: Dictionary = expedition.get("_remote_players")
+										var remote_targets: Dictionary = expedition.get("_remote_targets")
+										if final_states.has(target_peer_id) or remote_players.has(target_peer_id) or remote_targets.has(target_peer_id):
+											_fail("O anfitrião manteve estado/avatar fantasma após a desconexão.")
+											return
+										print("SERVER_DISCONNECT_CLEANUP_PASS | O anfitrião removeu avatar e estado após a saída real do cliente")
 										quit(0)
 										return
 								_fail("O cliente não concluiu o teste de movimento falsificado através da porta.")
@@ -233,6 +250,10 @@ func _watch_server_replication() -> void:
 				_fail("O anfitrião não recebeu a abertura da porta pedida pelo cliente.")
 				return
 	_fail("O anfitrião não recebeu a posição de teste nem criou o avatar remoto.")
+
+func _on_probe_peer_disconnected(peer_id: int) -> void:
+	disconnected_peer_id = peer_id
+	print("SERVER_PEER_DISCONNECTED_PASS | O anfitrião recebeu a desconexão real do cliente %d" % peer_id)
 
 func _on_connection_failed() -> void:
 	_fail("O cliente não conseguiu ligar-se ao servidor ENet.")

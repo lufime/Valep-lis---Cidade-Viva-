@@ -202,6 +202,8 @@ jobs:
           grep -q "CLIENT_WALL_MOVEMENT_SPOOF_SENT" "$client_log"
           grep -q "SERVER_WALL_MOVEMENT_REJECT_PASS" "$server_log"
           grep -q "CLIENT_WALL_MOVEMENT_REJECT_ACK_PASS" "$client_log"
+          grep -q "SERVER_PEER_DISCONNECTED_PASS" "$server_log"
+          grep -q "SERVER_DISCONNECT_CLEANUP_PASS" "$server_log"
           if grep -E "ERROR:|SCRIPT ERROR:|Parse Error:" "$server_log" "$client_log"; then
             echo "FAIL | Os logs dos processos ENet contêm erros inesperados."
             exit 1
