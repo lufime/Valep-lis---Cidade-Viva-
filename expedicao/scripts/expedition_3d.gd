@@ -463,19 +463,32 @@ func _is_client_movement_valid(previous_position: Vector3, new_position: Vector3
 	return previous_position.distance_to(new_position) <= maximum_distance
 
 func _is_movement_path_clear(previous_position: Vector3, new_position: Vector3) -> bool:
-	# Verifica no mundo físico do anfitrião que o segmento não atravessa paredes/portas.
-	# O cliente não pode contornar colisões enviando coordenadas plausíveis em pequenos passos.
+	# Varre o volume da cápsula real do jogador no mundo físico do anfitrião.
+	# Um raio central permitiria a um cliente atravessar cantos/arestas com passos pequenos.
+	var displacement := new_position - previous_position
+	if displacement.length_squared() <= 0.000001:
+		return true
 	var world := get_world_3d()
 	if world == null:
 		return false
-	var query := PhysicsRayQueryParameters3D.create(
-		previous_position + Vector3.UP,
-		new_position + Vector3.UP
-	)
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.38
+	capsule.height = 1.8
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = capsule
+	query.transform = Transform3D(Basis.IDENTITY, previous_position + Vector3(0.0, 0.9, 0.0))
+	query.motion = displacement
+	query.margin = 0.01
 	if is_instance_valid(_local_player):
 		query.exclude = [_local_player.get_rid()]
-	var hit := world.direct_space_state.intersect_ray(query)
-	return hit.is_empty()
+	var space := world.direct_space_state
+	# Não aceitamos uma trajetória que comece dentro de uma parede/porta.
+	if not space.intersect_shape(query, 8).is_empty():
+		return false
+	var fractions := space.cast_motion(query)
+	if fractions.size() < 2:
+		return false
+	return float(fractions[0]) >= 0.999
 
 func _build_environment() -> void:
 	var environment := WorldEnvironment.new()
