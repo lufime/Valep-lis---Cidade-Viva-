@@ -9,6 +9,8 @@ var _local_player: CharacterBody3D
 var _remote_players: Dictionary = {}
 var _remote_targets: Dictionary = {}
 var _remote_skeletons: Dictionary = {}
+var _remote_animation_players: Dictionary = {}
+var _remote_animation_names: Dictionary = {}
 var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
 var _sync_elapsed := 0.0
@@ -80,9 +82,11 @@ func _add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: floa
 	_remote_targets[peer_id] = state
 
 func _build_remote_avatar(avatar: Node3D) -> void:
-	# Prioriza o modelo humanoide glTF/GLB com malha e esqueleto real.
-	# Mantém o avatar procedural como fallback caso o asset não possa ser carregado.
-	var model_scene := load("res://assets/character.glb") as PackedScene
+	# Usa o modelo com animações CC0 quando foi gerado no PRE-FLIGHT.
+	# O modelo original continua disponível como fallback de importação.
+	var model_scene := load("res://assets/character_animated.glb") as PackedScene
+	if model_scene == null:
+		model_scene = load("res://assets/character.glb") as PackedScene
 	if model_scene != null:
 		var character := model_scene.instantiate() as Node3D
 		if character != null:
@@ -92,9 +96,33 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 			var skeleton := _find_skeleton(character)
 			if skeleton != null:
 				_remote_skeletons[avatar.get_instance_id()] = skeleton
+			var animation_player := _find_animation_player(character)
+			if animation_player != null:
+				var walk_name := _find_animation_name(animation_player, "walk")
+				var idle_name := _find_animation_name(animation_player, "idle")
+				if not walk_name.is_empty() or not idle_name.is_empty():
+					_remote_animation_players[avatar.get_instance_id()] = animation_player
+					_remote_animation_names[avatar.get_instance_id()] = {"walk": walk_name, "idle": idle_name, "current": ""}
+					if not idle_name.is_empty():
+						animation_player.play(idle_name)
 			return
 
 	_build_remote_avatar_fallback(avatar)
+
+func _find_animation_player(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node as AnimationPlayer
+	for child in node.get_children():
+		var found := _find_animation_player(child)
+		if found != null:
+			return found
+	return null
+
+func _find_animation_name(animation_player: AnimationPlayer, keyword: String) -> String:
+	for animation_name in animation_player.get_animation_list():
+		if String(animation_name).to_lower().contains(keyword):
+			return String(animation_name)
+	return ""
 
 func _find_skeleton(node: Node) -> Skeleton3D:
 	if node is Skeleton3D:
@@ -106,7 +134,19 @@ func _find_skeleton(node: Node) -> Skeleton3D:
 	return null
 
 func _animate_remote_avatar(remote_id: int, avatar: Node3D, delta: float, is_moving: bool) -> void:
-	var skeleton := _remote_skeletons.get(avatar.get_instance_id()) as Skeleton3D
+	var avatar_key := avatar.get_instance_id()
+	var animation_player := _remote_animation_players.get(avatar_key) as AnimationPlayer
+	if is_instance_valid(animation_player):
+		var names: Dictionary = _remote_animation_names.get(avatar_key, {})
+		var desired := String(names.get("walk", "")) if is_moving else String(names.get("idle", ""))
+		if desired.is_empty():
+			desired = String(names.get("idle", "")) if is_moving else String(names.get("walk", ""))
+		if not desired.is_empty() and String(names.get("current", "")) != desired:
+			animation_player.play(desired)
+			names["current"] = desired
+			_remote_animation_names[avatar_key] = names
+		return
+	var skeleton := _remote_skeletons.get(avatar_key) as Skeleton3D
 	if not is_instance_valid(skeleton):
 		return
 	var elapsed := float(_remote_anim_time.get(remote_id, 0.0)) + delta

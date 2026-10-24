@@ -1,0 +1,5 @@
+Universal Animation Library — Quaternius
+License: Creative Commons Zero v1.0 Universal (CC0 1.0).
+Official source: https://quaternius.com/packs/universalanimationlibrary.html
+Free for personal, educational, and commercial projects. Attribution is not required.
+The CI workflow downloads the Standard GLB from a public mirror only because binary assets cannot be committed by the repository API integration. The original asset remains authored by Quaternius.

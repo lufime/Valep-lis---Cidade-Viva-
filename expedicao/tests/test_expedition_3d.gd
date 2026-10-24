@@ -60,6 +60,7 @@ func _run_tests() -> void:
 	await _test_outer_wall_collisions(player)
 	await _test_keyboard_movement(player)
 	await _test_mouse_look_and_capture(player)
+	await _test_animation_asset()
 	await _test_main_menu()
 	await _test_multiplayer_replication_helpers(scene)
 	await _test_multiplayer_connection()
@@ -187,6 +188,49 @@ func _test_mouse_look_and_capture(player: CharacterBody3D) -> void:
 
 	_skip("Captura/libertação do rato por eventos reais", "O runner Godot headless não fornece um dispositivo de rato capturável; este comportamento requer teste gráfico.")
 	_skip("ESC e clique esquerdo para alternar captura do rato", "O estado Input.mouse_mode não é verificável de forma fiável neste runner headless.")
+
+func _test_animation_asset() -> void:
+	# O PRE-FLIGHT gera este GLB a partir da biblioteca CC0; localmente pode não existir.
+	if not ResourceLoader.exists("res://assets/character_animated.glb"):
+		_skip("Clips humanoides CC0", "O GLB animado é criado pelo passo de preparação do PRE-FLIGHT.")
+		return
+	var packed := load("res://assets/character_animated.glb") as PackedScene
+	_check(packed != null, "O modelo humanoide com animações deve importar como PackedScene")
+	if packed == null:
+		return
+	var model := packed.instantiate()
+	root.add_child(model)
+	await process_frame
+	var animation_player := _find_animation_player_for_test(model)
+	_check(animation_player != null, "O GLB combinado deve expor um AnimationPlayer")
+	if animation_player != null:
+		var names := animation_player.get_animation_list()
+		_check(names.size() > 0, "O modelo combinado deve conter clips de animação")
+		var has_walk := false
+		var has_idle := false
+		for animation_name in names:
+			var normalized := String(animation_name).to_lower()
+			has_walk = has_walk or normalized.contains("walk")
+			has_idle = has_idle or normalized.contains("idle")
+		_check(has_walk, "O GLB deve conter uma animação de caminhada")
+		_check(has_idle, "O GLB deve conter uma animação de repouso")
+		if has_walk:
+			for animation_name in names:
+				if String(animation_name).to_lower().contains("walk"):
+					animation_player.play(String(animation_name))
+					break
+			_check(animation_player.is_playing(), "A animação de caminhada deve poder ser iniciada")
+	model.queue_free()
+	await process_frame
+
+func _find_animation_player_for_test(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node as AnimationPlayer
+	for child in node.get_children():
+		var found := _find_animation_player_for_test(child)
+		if found != null:
+			return found
+	return null
 
 func _test_main_menu() -> void:
 	var menu_scene := load("res://scenes/main.tscn") as PackedScene

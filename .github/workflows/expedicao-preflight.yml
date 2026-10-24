@@ -36,6 +36,30 @@ jobs:
           chmod +x /tmp/godot/Godot_v4.5-stable_linux.x86_64
           echo "/tmp/godot" >> "$GITHUB_PATH"
 
+      - name: Obter animações humanoides CC0 e combiná-las com o modelo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p expedicao/assets
+          curl -fL --retry 3 \
+            "https://raw.githubusercontent.com/DyingStar-game/DyingStar/509148dc81a54061ec1422dbe78d03af4ac8648b/assets/Universal%20Animation%20Library/Unreal-Godot/UAL1_Standard.glb" \
+            -o /tmp/UAL1_Standard.glb
+          test -s /tmp/UAL1_Standard.glb
+          npm install --no-audit --no-fund --prefix expedicao/tools @gltf-transform/core @gltf-transform/extensions
+          node expedicao/tools/merge_animations.mjs \
+            expedicao/assets/character.glb \
+            expedicao/assets/character_animated.glb \
+            /tmp/UAL1_Standard.glb
+          test -s expedicao/assets/character_animated.glb
+          test "$(stat -c %s expedicao/assets/character_animated.glb)" -gt 1000000
+
+      - name: Importar modelo com animações para Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.5-stable_linux.x86_64 --headless --path expedicao --editor --quit
+          test -s expedicao/assets/character_animated.glb.import
+
       - name: Verificar importação e análise do projeto
         shell: bash
         run: |
