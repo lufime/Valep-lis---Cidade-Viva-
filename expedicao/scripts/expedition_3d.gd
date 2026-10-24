@@ -98,11 +98,20 @@ func _add_box(label: String, pos: Vector3, size: Vector3, color: Color) -> void:
 	add_child(body)
 
 func _add_door(label: String, pos: Vector3, yaw: float) -> void:
-	var door := AnimatableBody3D.new()
+	# A Node3D pivot owns the door transform; physics is kept on a child body
+	# so the physics server cannot reset the pivot rotation.
+	var door := Node3D.new()
 	door.name = label
 	door.position = pos
 	door.rotation.y = yaw
 	door.set_meta("is_door", true)
+	door.set_meta("open", false)
+	door.set_meta("closed_yaw", yaw)
+
+	var body := StaticBody3D.new()
+	body.name = "DoorCollider"
+	body.set_meta("is_door", true)
+	body.set_meta("door_root", NodePath(".."))
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(1.8, 2.3, 0.16)
@@ -112,13 +121,13 @@ func _add_door(label: String, pos: Vector3, yaw: float) -> void:
 	material.metallic = 0.45
 	material.roughness = 0.38
 	mesh_instance.material_override = material
-	door.add_child(mesh_instance)
+	body.add_child(mesh_instance)
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(1.8, 2.3, 0.16)
 	collision.shape = shape
-	door.add_child(collision)
-	door.set_meta("open", false)
+	body.add_child(collision)
+	door.add_child(body)
 	add_child(door)
 
 func _build_hud() -> void:
