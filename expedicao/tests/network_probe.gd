@@ -10,6 +10,7 @@ var probe: Node
 var api: MultiplayerAPI
 var expedition: Node3D
 var disconnected_peer_id: int = 0
+var require_second_client := false
 
 func _initialize() -> void:
 	call_deferred("_start_probe")
@@ -50,7 +51,8 @@ func _start_probe() -> void:
 		_watch_initial_spawn()
 		_watch_server_replication()
 		create_timer(30.0).timeout.connect(_on_timeout)
-	elif mode == "client":
+	elif mode == "client" or mode == "client_multi":
+		require_second_client = mode == "client_multi"
 		api.connected_to_server.connect(_on_connected_to_server)
 		api.connection_failed.connect(_on_connection_failed)
 		var client_peer := ENetMultiplayerPeer.new()
@@ -128,6 +130,26 @@ func _on_connected_to_server() -> void:
 	if absf(float(host_state.pitch) - EXPECTED_HOST_PITCH) > 0.1:
 		_fail("A inclinação da vista do anfitrião não foi replicada: %s" % host_state.pitch)
 		return
+	if require_second_client:
+		var other_client_id := -1
+		for attempt in range(40):
+			await create_timer(0.1).timeout
+			var remote_players: Dictionary = expedition.get("_remote_players")
+			for remote_id in remote_players.keys():
+				if int(remote_id) != 1 and int(remote_id) != api.get_unique_id():
+					other_client_id = int(remote_id)
+					break
+			if other_client_id > 0:
+				break
+		if other_client_id < 0:
+			_fail("O cliente não recebeu o avatar do segundo cliente ligado em simultâneo.")
+			return
+		var remote_targets: Dictionary = expedition.get("_remote_targets")
+		var remote_states: Dictionary = expedition.get("_player_states")
+		if not remote_targets.has(other_client_id) or not remote_states.has(other_client_id):
+			_fail("O avatar do segundo cliente existe sem destino/estado replicado.")
+			return
+		print("CLIENT_MULTI_CLIENT_AVATAR_PASS | O cliente recebeu o avatar e o estado do segundo cliente ENet")
 	print("CLIENT_REMOTE_PLAYER_PASS | O cliente recebeu posição e avatar remoto do anfitrião")
 	print("CLIENT_REMOTE_ORIENTATION_PASS | Yaw e pitch do anfitrião replicados")
 	print("CLIENT_REPLICATION_PASS | Replicação anfitrião-cliente verificada no cliente")
