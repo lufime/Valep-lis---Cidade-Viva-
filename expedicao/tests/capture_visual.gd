@@ -24,6 +24,18 @@ func _capture_scene() -> void:
 		return
 	camera.current = true
 
+	# Mostrar também o avatar humanoide na captura de validação.
+	var player_model := load("res://assets/character_animated.glb") as PackedScene
+	if player_model == null:
+		player_model = load("res://assets/character.glb") as PackedScene
+	if player_model != null:
+		var showcase_character := player_model.instantiate() as Node3D
+		if showcase_character != null:
+			showcase_character.name = "ShowcaseCharacter"
+			showcase_character.position = Vector3(0.0, 0.0, -2.0)
+			showcase_character.rotation.y = PI
+			scene.add_child(showcase_character)
+
 	# A captura de validação mostra as três ligações abertas para que os vãos
 	# não sejam confundidos com portas bloqueadas na imagem estática.
 	for door_name in ["DoorToNorth", "DoorToEast", "DoorToSouth"]:
