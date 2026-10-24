@@ -50,6 +50,12 @@ func _build_map() -> void:
 	_add_box("EastRoomFloor", Vector3(12, -0.2, 0), Vector3(10, 0.4, 10), Color("#34333a"))
 	_add_box("SouthRoomFloor", Vector3(0, -0.2, 12), Vector3(10, 0.4, 10), Color("#2e353a"))
 
+	# Fill the 2 m gaps between the central room and each outer zone so
+	# players have continuous collision floor while crossing the doorways.
+	_add_box("NorthConnectorFloor", Vector3(0, -0.2, -6), Vector3(4.4, 0.4, 2), Color("#29343b"))
+	_add_box("EastConnectorFloor", Vector3(6, -0.2, 0), Vector3(2, 0.4, 4.4), Color("#34333a"))
+	_add_box("SouthConnectorFloor", Vector3(0, -0.2, 6), Vector3(4.4, 0.4, 2), Color("#2e353a"))
+
 	# Central room walls with openings at each connection.
 	_add_box("CentralWestWall", Vector3(-5, 1.5, 0), Vector3(0.3, 3, 10), Color("#505760"))
 	_add_box("CentralEastUpper", Vector3(5, 1.5, -3.6), Vector3(0.3, 3, 2.8), Color("#505760"))
