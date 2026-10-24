@@ -8,6 +8,9 @@ func _initialize() -> void:
 	call_deferred("_run_tests")
 
 func _run_tests() -> void:
+	var icon_path := String(ProjectSettings.get_setting("application/config/icon", ""))
+	_check(not icon_path.is_empty(), "O projeto deve declarar um ícone de aplicação")
+	_check(not icon_path.is_empty() and ResourceLoader.exists(icon_path), "O ícone de aplicação declarado deve existir e ser carregável")
 	var packed := load("res://scenes/expedition_3d.tscn") as PackedScene
 	_check(packed != null, "A cena 3D deve carregar como PackedScene")
 	if packed == null:
