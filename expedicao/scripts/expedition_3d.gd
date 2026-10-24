@@ -42,7 +42,7 @@ func _process(delta: float) -> void:
 	if multiplayer.is_server():
 		_broadcast_player_state(peer_id, state)
 	else:
-		_rpc_sync_player.rpc_id(1, peer_id, state.position, state.yaw, state.pitch)
+		_rpc_submit_player_state.rpc_id(1, peer_id, state.position, state.yaw, state.pitch)
 
 func _register_with_host() -> void:
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
@@ -313,27 +313,35 @@ func _make_remote_avatar_part(
 	avatar.add_child(part)
 
 @rpc("any_peer", "call_remote", "unreliable")
+func _rpc_submit_player_state(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	# Clientes apenas submetem movimento ao anfitrião; nunca podem publicar diretamente
+	# estados de outros jogadores para os restantes clientes.
+	if not multiplayer.is_server():
+		return
+	if multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
+		return
+	if not _player_states.has(peer_id):
+		return
+	var previous_state: Dictionary = _player_states[peer_id]
+	var now_msec := Time.get_ticks_msec()
+	var last_msec := int(_last_server_sync_msec.get(peer_id, now_msec))
+	var elapsed_seconds := float(now_msec - last_msec) / 1000.0
+	if not _is_client_movement_valid(previous_state.position, position, elapsed_seconds):
+		return
+	if not is_finite(yaw) or not is_finite(pitch) or absf(pitch) > 1.5:
+		return
+	_last_server_sync_msec[peer_id] = now_msec
+	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	_player_states[peer_id] = state
+	_apply_remote_position(peer_id, position, yaw, pitch)
+	_broadcast_player_state(peer_id, state)
+
+@rpc("authority", "call_remote", "unreliable")
 func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	# Apenas o anfitrião pode distribuir estados de movimento aos clientes.
 	if multiplayer.is_server():
-		if multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
-			return
-		if not _player_states.has(peer_id):
-			return
-		var previous_state: Dictionary = _player_states[peer_id]
-		var now_msec := Time.get_ticks_msec()
-		var last_msec := int(_last_server_sync_msec.get(peer_id, now_msec))
-		var elapsed_seconds := float(now_msec - last_msec) / 1000.0
-		if not _is_client_movement_valid(previous_state.position, position, elapsed_seconds):
-			return
-		if not is_finite(yaw) or not is_finite(pitch) or absf(pitch) > 1.5:
-			return
-		_last_server_sync_msec[peer_id] = now_msec
-		var state := {"position": position, "yaw": yaw, "pitch": pitch}
-		_player_states[peer_id] = state
-		_apply_remote_position(peer_id, position, yaw, pitch)
-		_broadcast_player_state(peer_id, state)
-	else:
-		_apply_remote_position(peer_id, position, yaw, pitch)
+		return
+	_apply_remote_position(peer_id, position, yaw, pitch)
 
 func _broadcast_player_state(peer_id: int, state: Dictionary) -> void:
 	_apply_remote_position(peer_id, state.position, float(state.yaw), float(state.pitch))

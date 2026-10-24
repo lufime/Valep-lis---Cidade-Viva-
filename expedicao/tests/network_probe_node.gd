@@ -36,7 +36,7 @@ func close_replication_ack() -> void:
 		return
 	print("CLIENT_DOOR_CLOSE_REPLICATION_PASS | O cliente recebeu o estado fechado da porta")
 	var player_id := multiplayer.get_unique_id()
-	scene.rpc_id(1, "_rpc_sync_player", player_id, Vector3(50.0, 0.1, 50.0), 0.0, 0.0)
+	scene.rpc_id(1, "_rpc_submit_player_state", player_id, Vector3(50.0, 0.1, 50.0), 0.0, 0.0)
 	print("CLIENT_TELEPORT_ATTEMPT_SENT | O cliente enviou uma posição impossível para verificar a rejeição do anfitrião")
 
 @rpc("authority", "call_remote", "reliable")
