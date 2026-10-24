@@ -101,6 +101,10 @@ func _test_creature_ai(scene: Node3D, creature: CharacterBody3D, player: Charact
 	player.global_position = creature.global_position + Vector3(100.0, 0.0, 100.0)
 	await physics_frame
 	_check(String(creature.get("state")) == "patrol", "A IA deve regressar à patrulha quando o jogador está fora do raio de deteção")
+	var patrol_start := creature.global_position
+	for frame_index in range(8):
+		await physics_frame
+	_check(creature.global_position.distance_to(patrol_start) > 0.05, "A criatura desloca-se fisicamente ao longo da rota de patrulha")
 	player.global_position = Vector3.ZERO
 	await physics_frame
 	var return_state := String(creature.get("state"))
