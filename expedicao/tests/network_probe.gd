@@ -1,80 +1,56 @@
 extends SceneTree
 
 const TEST_PORT: int = 24561
-const MAX_ATTEMPTS: int = 500
-const POLL_INTERVAL: float = 0.02
+
+var probe: Node
 
 func _initialize() -> void:
-	call_deferred("_run_probe")
+	call_deferred("_start_probe")
 
-func _run_probe() -> void:
+func _start_probe() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if args.is_empty():
 		_fail("É necessário indicar o modo server ou client.")
 		return
 
 	var mode: String = args[0]
-	var peer := ENetMultiplayerPeer.new()
+	probe = Node.new()
+	probe.name = "Probe"
+	probe.set_script(load("res://tests/network_probe_node.gd"))
+	root.add_child(probe)
+
 	if mode == "server":
-		var error: Error = peer.create_server(TEST_PORT, 4)
-		if error != OK:
-			_fail("O servidor ENet não arrancou: %s" % error)
+		var server_peer := ENetMultiplayerPeer.new()
+		var server_error: Error = server_peer.create_server(TEST_PORT, 4)
+		if server_error != OK:
+			_fail("O servidor ENet não arrancou: %s" % server_error)
 			return
+		multiplayer.multiplayer_peer = server_peer
 		print("SERVER_READY | À escuta na porta UDP %d" % TEST_PORT)
-		await _run_server(peer)
+		create_timer(12.0).timeout.connect(_on_timeout)
 	elif mode == "client":
-		var error: Error = peer.create_client("127.0.0.1", TEST_PORT)
-		if error != OK:
-			_fail("O cliente ENet não arrancou: %s" % error)
+		multiplayer.connected_to_server.connect(_on_connected_to_server)
+		multiplayer.connection_failed.connect(_on_connection_failed)
+		var client_peer := ENetMultiplayerPeer.new()
+		var client_error: Error = client_peer.create_client("127.0.0.1", TEST_PORT)
+		if client_error != OK:
+			_fail("O cliente ENet não arrancou: %s" % client_error)
 			return
+		multiplayer.multiplayer_peer = client_peer
 		print("CLIENT_STARTED | A ligar ao servidor local")
-		await _run_client(peer)
+		create_timer(10.0).timeout.connect(_on_timeout)
 	else:
 		_fail("Modo desconhecido: %s" % mode)
 
-func _run_server(peer: ENetMultiplayerPeer) -> void:
-	for attempt in range(MAX_ATTEMPTS):
-		peer.poll()
-		if peer.get_available_packet_count() > 0:
-			var packet: PackedByteArray = peer.get_packet()
-			var message: String = packet.get_string_from_utf8()
-			var sender_id: int = peer.get_packet_peer()
-			if message == "PING":
-				peer.set_target_peer(sender_id)
-				var send_error: Error = peer.put_packet("PONG".to_utf8_buffer())
-				if send_error != OK:
-					_fail("O servidor não conseguiu enviar PONG: %s" % send_error)
-					return
-				print("SERVER_PASS | Recebeu PING e respondeu PONG ao peer %d" % sender_id)
-				for flush_attempt in range(5):
-					peer.poll()
-					await create_timer(POLL_INTERVAL).timeout
-				quit(0)
-				return
-		await create_timer(POLL_INTERVAL).timeout
-	_fail("O servidor não recebeu PING dentro do limite.")
+func _on_connected_to_server() -> void:
+	print("CLIENT_CONNECTED | Ligação estabelecida; a enviar RPC PING")
+	probe.rpc_id(1, "ping")
 
-func _run_client(peer: ENetMultiplayerPeer) -> void:
-	var ping_sent := false
-	for attempt in range(MAX_ATTEMPTS):
-		peer.poll()
-		if peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not ping_sent:
-			peer.set_target_peer(1)
-			var send_error: Error = peer.put_packet("PING".to_utf8_buffer())
-			if send_error != OK:
-				_fail("O cliente não conseguiu enviar PING: %s" % send_error)
-				return
-			ping_sent = true
-			print("CLIENT_PING_SENT | PING enviado ao anfitrião")
-		if peer.get_available_packet_count() > 0:
-			var packet: PackedByteArray = peer.get_packet()
-			var message: String = packet.get_string_from_utf8()
-			if message == "PONG":
-				print("CLIENT_PASS | Recebeu PONG do anfitrião")
-				quit(0)
-				return
-		await create_timer(POLL_INTERVAL).timeout
-	_fail("O cliente não recebeu PONG dentro do limite.")
+func _on_connection_failed() -> void:
+	_fail("O cliente não conseguiu ligar-se ao servidor ENet.")
+
+func _on_timeout() -> void:
+	_fail("O teste ENet entre processos excedeu o tempo limite.")
 
 func _fail(message: String) -> void:
 	push_error("NETWORK_PROBE_FAIL | " + message)
