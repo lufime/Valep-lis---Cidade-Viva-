@@ -438,6 +438,10 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	_check(avatar != null, "Um jogador remoto cria uma representação visual")
 	if avatar != null:
 		_check(avatar.get_node_or_null("Head") is MeshInstance3D, "O avatar remoto tem cabeça modelada")
+		_check(avatar.get_node_or_null("Hair") is MeshInstance3D and avatar.get_node_or_null("Neck") is MeshInstance3D, "O avatar remoto tem cabelo e pescoço modelados")
+		_check(avatar.get_node_or_null("EyeLeft") is MeshInstance3D and avatar.get_node_or_null("EyeRight") is MeshInstance3D and avatar.get_node_or_null("Nose") is MeshInstance3D, "O rosto do avatar remoto tem olhos e nariz")
+		_check(avatar.get_node_or_null("UtilityVest") is MeshInstance3D and avatar.get_node_or_null("VestReflectiveBand") is MeshInstance3D and avatar.get_node_or_null("UtilityBelt") is MeshInstance3D, "O avatar remoto tem colete, faixa refletora e cinto")
+		_check(avatar.get_node_or_null("ShoulderLeft") is MeshInstance3D and avatar.get_node_or_null("ShoulderRight") is MeshInstance3D and avatar.get_node_or_null("HandLeft") is MeshInstance3D and avatar.get_node_or_null("HandRight") is MeshInstance3D, "O avatar remoto tem ombros e mãos modelados")
 		_check(avatar.get_node_or_null("Torso") is MeshInstance3D, "O avatar remoto tem tronco modelado")
 		_check(avatar.get_node_or_null("ArmLeft") is MeshInstance3D and avatar.get_node_or_null("ArmRight") is MeshInstance3D, "O avatar remoto tem os dois braços")
 		_check(avatar.get_node_or_null("LegLeft") is MeshInstance3D and avatar.get_node_or_null("LegRight") is MeshInstance3D, "O avatar remoto tem as duas pernas")

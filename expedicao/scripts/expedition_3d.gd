@@ -87,6 +87,40 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 	head.height = 0.38
 	_make_remote_avatar_part(avatar, "Head", head, Vector3(0, 1.78, 0), Color("#d6a078"))
 
+	var neck := CylinderMesh.new()
+	neck.top_radius = 0.105
+	neck.bottom_radius = 0.12
+	neck.height = 0.18
+	_make_remote_avatar_part(avatar, "Neck", neck, Vector3(0, 1.55, 0), Color("#bd8966"))
+
+	var hair := SphereMesh.new()
+	hair.radius = 0.195
+	hair.height = 0.16
+	_make_remote_avatar_part(avatar, "Hair", hair, Vector3(0, 1.91, 0.015), Color("#30251f"))
+
+	var left_eye := SphereMesh.new()
+	left_eye.radius = 0.027
+	left_eye.height = 0.04
+	_make_remote_avatar_part(avatar, "EyeLeft", left_eye, Vector3(-0.065, 1.80, -0.165), Color("#f5f2e9"))
+	var right_eye := SphereMesh.new()
+	right_eye.radius = 0.027
+	right_eye.height = 0.04
+	_make_remote_avatar_part(avatar, "EyeRight", right_eye, Vector3(0.065, 1.80, -0.165), Color("#f5f2e9"))
+	var nose := SphereMesh.new()
+	nose.radius = 0.035
+	nose.height = 0.065
+	_make_remote_avatar_part(avatar, "Nose", nose, Vector3(0, 1.755, -0.185), Color("#c28d69"))
+
+	var vest := BoxMesh.new()
+	vest.size = Vector3(0.43, 0.48, 0.29)
+	_make_remote_avatar_part(avatar, "UtilityVest", vest, Vector3(0, 1.22, -0.015), Color("#d18a3e"))
+	var vest_panel := BoxMesh.new()
+	vest_panel.size = Vector3(0.32, 0.07, 0.025)
+	_make_remote_avatar_part(avatar, "VestReflectiveBand", vest_panel, Vector3(0, 1.17, -0.168), Color("#e8e5cc"))
+	var belt := BoxMesh.new()
+	belt.size = Vector3(0.43, 0.09, 0.27)
+	_make_remote_avatar_part(avatar, "UtilityBelt", belt, Vector3(0, 0.91, 0), Color("#222b34"))
+
 	var left_arm := CapsuleMesh.new()
 	left_arm.radius = 0.095
 	left_arm.height = 0.68
@@ -96,6 +130,24 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 	right_arm.radius = 0.095
 	right_arm.height = 0.68
 	_make_remote_avatar_part(avatar, "ArmRight", right_arm, Vector3(0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, 0.12))
+
+	var left_shoulder := SphereMesh.new()
+	left_shoulder.radius = 0.13
+	left_shoulder.height = 0.22
+	_make_remote_avatar_part(avatar, "ShoulderLeft", left_shoulder, Vector3(-0.31, 1.39, 0), Color("#d18a3e"))
+	var right_shoulder := SphereMesh.new()
+	right_shoulder.radius = 0.13
+	right_shoulder.height = 0.22
+	_make_remote_avatar_part(avatar, "ShoulderRight", right_shoulder, Vector3(0.31, 1.39, 0), Color("#d18a3e"))
+
+	var left_hand := SphereMesh.new()
+	left_hand.radius = 0.085
+	left_hand.height = 0.13
+	_make_remote_avatar_part(avatar, "HandLeft", left_hand, Vector3(-0.37, 0.79, -0.01), Color("#c28d69"))
+	var right_hand := SphereMesh.new()
+	right_hand.radius = 0.085
+	right_hand.height = 0.13
+	_make_remote_avatar_part(avatar, "HandRight", right_hand, Vector3(0.37, 0.79, -0.01), Color("#c28d69"))
 
 	var left_leg := CapsuleMesh.new()
 	left_leg.radius = 0.13
