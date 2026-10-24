@@ -13,6 +13,7 @@ Este documento descreve apenas a base isolada `expedicao/` e não declara o jogo
 - Validação física no anfitrião por varrimento da cápsula do jogador, incluindo movimento ao nível do chão, rejeição de paredes e teste de passagem com as portas norte, este e sul fechadas/abertas.
 - Criatura IA em protótipo: presença obrigatória na cena, controlador dedicado e transições testadas entre deteção/perseguição, estado de ataque e regresso à patrulha. O estado de ataque ainda não aplica dano nem efeitos de jogo.
 - Teste de integração com três processos Godot separados (anfitrião e dois clientes simultâneos): ambos os clientes recebem o avatar e o estado do outro cliente; a suite também verifica PING/PONG, posição/orientação, spawn validado, portas, limites de movimento, teletransporte, percurso contra colisões e limpeza após desconexão.
+- Exportação Android de depuração no CI, integridade ZIP, assinatura `apksigner` e metadados de pacote/versão no manifesto. Isto não prova instalação ou arranque num dispositivo físico.
 - Verificação de que o projeto declara um ícone de aplicação existente e carregável.
 - Preparação do modelo humanoide com clips CC0 e verificações de importação e seleção de animações idle/walk/locomoção rápida.
 - Teste gráfico separado sob Xvfb para as transições de captura inicial do rato, ESC para libertar e clique esquerdo para recapturar; este teste usa eventos sintéticos, não um dispositivo físico.

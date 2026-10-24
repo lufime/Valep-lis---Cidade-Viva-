@@ -30,7 +30,7 @@ Este é apenas um protótipo técnico. **Não é ainda uma versão jogável comp
 - A criatura deve estar presente em todas as partidas e ser controlada exclusivamente pela IA.
 - O traidor deve ser um jogador humano distinto, informado em privado e com objetivos secretos.
 - A introdução pública não pode revelar a identidade do traidor nem a natureza da criatura.
-- O CI já exporta, assina com chave de depuração e valida a estrutura do APK Android. A instalação e o arranque ainda não foram confirmados num dispositivo físico; o APK de depuração não é uma versão de distribuição.
+- O CI exporta o APK de depuração, valida a estrutura ZIP, verifica a assinatura com `apksigner` e confirma o nome do pacote/versão no manifesto. A instalação e o arranque ainda não foram confirmados num dispositivo físico; o APK de depuração não é uma versão de distribuição.
 - O teste de rato físico real permanece omitido no CI porque o runner não dispõe de um dispositivo físico. O teste gráfico usa eventos sintéticos e não substitui o ensaio num computador/dispositivo real.
 
 ## PRE-FLIGHT
