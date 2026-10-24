@@ -34,6 +34,7 @@ func _run_tests() -> void:
 		door.force_update_transform()
 		_check(bool(door.get_meta("open", false)), "Interagir deve abrir a porta")
 		var opened_yaw: float = door.rotation.y
+		print("DEBUG | yaw inicial=", initial_yaw, " yaw aberto=", opened_yaw, " meta closed_yaw=", door.get_meta("closed_yaw", "AUSENTE"))
 		_check(absf(wrapf(opened_yaw - initial_yaw, -PI, PI)) > 0.1, "Abrir deve alterar a rotação da porta")
 		player.call("_interact")
 		door.force_update_transform()
