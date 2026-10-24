@@ -104,15 +104,14 @@ func _request_door_toggle(door: Node3D) -> void:
 	var next_open := not bool(door.get_meta("open", false))
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
 		if multiplayer.is_server():
-			_apply_door_state(door.name, next_open)
-			_rpc_set_door_state.rpc(door.name, next_open)
+			_toggle_door_authoritatively(door.name)
 		else:
 			_rpc_request_door_toggle.rpc_id(1, door.name, next_open)
 	else:
-		_apply_door_state(door.name, next_open)
+		_toggle_door_authoritatively(door.name)
 
 @rpc("any_peer", "call_remote", "reliable")
-func _rpc_request_door_toggle(door_name: String, next_open: bool) -> void:
+func _rpc_request_door_toggle(door_name: String, _requested_open: bool) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
@@ -125,8 +124,16 @@ func _rpc_request_door_toggle(door_name: String, next_open: bool) -> void:
 	var doorway_center: Vector3 = door.get_meta("doorway_center", door.global_position)
 	if player_position.distance_to(doorway_center) > 4.0:
 		return
-	_apply_door_state(door_name, next_open)
-	_rpc_set_door_state.rpc(door_name, next_open)
+	_toggle_door_authoritatively(door_name)
+
+func _toggle_door_authoritatively(door_name: String) -> void:
+	var door := get_node_or_null(door_name) as Node3D
+	if door == null or not door.has_meta("is_door"):
+		return
+	var authoritative_open := not bool(door.get_meta("open", false))
+	_apply_door_state(door_name, authoritative_open)
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server():
+		_rpc_set_door_state.rpc(door_name, authoritative_open)
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_set_door_state(door_name: String, is_open: bool) -> void:

@@ -445,3 +445,7 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	_check(absf(wrapf(door.rotation.y - float(door.get_meta("closed_yaw")), -PI, PI)) > 0.1, "A porta replica a rotação aberta")
 	scene.call("_apply_door_state", "DoorToNorth", false)
 	_check(not bool(door.get_meta("open", true)), "O estado remoto fecha a porta no cenário")
+	scene.call("_toggle_door_authoritatively", "DoorToNorth")
+	_check(bool(door.get_meta("open", false)), "O anfitrião alterna a porta a partir do estado autoritativo")
+	scene.call("_toggle_door_authoritatively", "DoorToNorth")
+	_check(not bool(door.get_meta("open", true)), "O anfitrião fecha a porta sem confiar no estado pedido pelo cliente")
