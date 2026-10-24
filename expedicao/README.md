@@ -14,7 +14,7 @@ Esta pasta é uma reconstrução inicial e isolada do projeto. Não substitui ne
 - Jogador local em primeira pessoa, movimento por WASD e olhar pelo rato.
 - Três portas com colisão física, interação por E e passagem física testada quando abertas.
 - Modelo humanoide GLB com esqueleto e clips de repouso, caminhada e corrida para representações remotas.
-- Replicação técnica de posições/orientações e estado das portas; o anfitrião impõe o spawn, limita cadência/distância e valida a trajetória com varrimento da cápsula física do jogador contra as colisões do mapa. Os testes ENet em processos separados cobrem também tentativas de teletransporte e de atravessar uma porta fechada em pequenos passos falsificados.
+- Replicação técnica de posições/orientações e estado das portas; o anfitrião impõe o spawn, limita cadência/distância e valida a trajetória com varrimento da cápsula física do jogador contra as colisões do mapa. Os testes ENet em processos separados cobrem teletransporte, tentativa de atravessar uma porta fechada em pequenos passos falsificados e limpeza real do avatar/estado após a saída do cliente.
 - Limpeza do avatar e do estado transitório quando um jogador se desconecta.
 - Teste gráfico separado com eventos sintéticos para captura inicial do rato, ESC para libertar e clique esquerdo para recapturar.
 
