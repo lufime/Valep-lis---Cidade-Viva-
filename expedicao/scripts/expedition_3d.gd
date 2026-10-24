@@ -476,9 +476,11 @@ func _is_movement_path_clear(previous_position: Vector3, new_position: Vector3) 
 	capsule.height = 1.8
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = capsule
-	query.transform = Transform3D(Basis.IDENTITY, previous_position + Vector3(0.0, 0.9, 0.0))
+	# Mantém a cápsula 2 cm acima do chão: o root do jogador pode estar a y=0
+	# depois da gravidade, e uma margem a tocar no chão bloquearia todo o movimento horizontal.
+	query.transform = Transform3D(Basis.IDENTITY, previous_position + Vector3(0.0, 0.92, 0.0))
 	query.motion = displacement
-	query.margin = 0.01
+	query.margin = 0.005
 	if is_instance_valid(_local_player):
 		query.exclude = [_local_player.get_rid()]
 	var space := world.direct_space_state
