@@ -1,0 +1,112 @@
+name: A Última Expedição — Exportação APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rebuild/a-ultima-expedicao-zero
+    paths:
+      - "expedicao/**"
+      - ".github/workflows/expedicao-android.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultima-expedicao-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  export-android:
+    name: Exportar e validar APK de teste
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" >> "$GITHUB_ENV"
+
+      - name: Instalar Godot 4.5 e modelos oficiais de exportação
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip" \
+            -o /tmp/godot.zip
+          curl -fL --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_export_templates.tpz" \
+            -o /tmp/godot-templates.tpz
+          mkdir -p /tmp/godot "$HOME/.local/share/godot/export_templates/4.5.stable"
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.5-stable_linux.x86_64
+          unzip -q /tmp/godot-templates.tpz -d /tmp/godot-templates
+          test -d /tmp/godot-templates/templates
+          cp -a /tmp/godot-templates/templates/. "$HOME/.local/share/godot/export_templates/4.5.stable/"
+          test -s "$HOME/.local/share/godot/export_templates/4.5.stable/android_debug.apk"
+          echo "/tmp/godot" >> "$GITHUB_PATH"
+
+      - name: Configurar caminhos Android do Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_path="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk_path"
+          java_bin="$(readlink -f "$(command -v java)")"
+          java_home="$(dirname "$(dirname "$java_bin")")"
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$sdk_path"
+          export/android/java_sdk_path = "$java_home"
+          EOF
+          test -d "$sdk_path/platforms/android-35"
+          test -x "$java_bin"
+
+      - name: Importar projeto e validar configuração Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          "$godot_bin" --version
+          "$godot_bin" --headless --editor --path expedicao --quit
+          test -s expedicao/export_presets.cfg
+          grep -q 'platform="Android"' expedicao/export_presets.cfg
+          grep -q 'permissions/internet=true' expedicao/export_presets.cfg
+
+      - name: Exportar APK de depuração
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
+            --headless --path expedicao \
+            --export-debug "Android APK" "$GITHUB_WORKSPACE/build/A-Ultima-Expedicao-debug.apk"
+          test -s build/A-Ultima-Expedicao-debug.apk
+          unzip -t build/A-Ultima-Expedicao-debug.apk
+          echo "APK_EXPORT_PASS | APK de depuração exportada e ZIP validado"
+
+      - name: Publicar APK de teste
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-Ultima-Expedicao-Android-debug
+          path: build/A-Ultima-Expedicao-debug.apk
+          if-no-files-found: error
+          retention-days: 7
