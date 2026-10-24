@@ -421,21 +421,21 @@ func _build_environment() -> void:
 	env.sky.sky_material = sky_material
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color("#8ba0b8")
-	env.ambient_light_energy = 0.62
+	env.ambient_light_energy = 0.52
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.environment = env
 	add_child(environment)
 
 	var light := DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-38, -28, 0)
-	light.light_energy = 0.22
-	light.shadow_enabled = false
+	light.light_energy = 0.72
+	light.shadow_enabled = true
 	add_child(light)
 
 	var fill := OmniLight3D.new()
 	fill.position = Vector3(0, 2.7, 0)
 	fill.light_color = Color("#b9d9ff")
-	fill.light_energy = 0.82
+	fill.light_energy = 0.42
 	fill.omni_range = 12.0
 	add_child(fill)
 
@@ -616,6 +616,6 @@ func _build_hud() -> void:
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(info)
 	var note := Label.new()
-	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Multijogador e IA ainda não integrados neste cenário."
+	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Rede técnica (avatares/portas) em validação. IA da criatura ainda não implementada."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(note)

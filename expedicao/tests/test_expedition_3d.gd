@@ -19,6 +19,9 @@ func _run_tests() -> void:
 	await process_frame
 	await physics_frame
 
+	_test_environment_lighting(scene)
+	_test_hud_status(scene)
+
 	var player := scene.get_node_or_null("LocalPlayer") as CharacterBody3D
 	_check(player != null, "A cena deve criar o jogador local")
 	_check(scene.get_node_or_null("CentralFloor") != null, "A cena deve criar a sala central")
@@ -549,3 +552,28 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	_check(bool(door.get_meta("open", false)), "O anfitrião alterna a porta a partir do estado autoritativo")
 	scene.call("_toggle_door_authoritatively", "DoorToNorth")
 	_check(not bool(door.get_meta("open", true)), "O anfitrião fecha a porta sem confiar no estado pedido pelo cliente")
+
+func _test_environment_lighting(scene: Node3D) -> void:
+	var environment: WorldEnvironment
+	var key_light: DirectionalLight3D
+	for child in scene.get_children():
+		if child is WorldEnvironment:
+			environment = child as WorldEnvironment
+		elif child is DirectionalLight3D:
+			key_light = child as DirectionalLight3D
+	_check(environment != null and environment.environment != null, "O cenário deve ter um ambiente de renderização configurado")
+	_check(key_light != null and key_light.shadow_enabled, "A luz principal deve projetar sombras para dar profundidade ao cenário")
+	if key_light != null:
+		_check(key_light.light_energy >= 0.6, "A luz principal deve ter intensidade suficiente para revelar os materiais")
+
+func _test_hud_status(scene: Node3D) -> void:
+	var labels := scene.find_children("*", "Label", true, false)
+	var status_note: Label
+	for item in labels:
+		var label := item as Label
+		if label != null and label.text.contains("IA da criatura ainda não implementada"):
+			status_note = label
+			break
+	_check(status_note != null, "O HUD deve declarar explicitamente que a IA da criatura ainda não está implementada")
+	if status_note != null:
+		_check(status_note.text.contains("Rede técnica") and status_note.text.contains("em validação"), "O HUD deve distinguir a rede técnica em validação da IA ainda não implementada")
