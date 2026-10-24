@@ -420,8 +420,8 @@ func _build_environment() -> void:
 	sky_material.ground_horizon_color = Color("#20262d")
 	env.sky.sky_material = sky_material
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("#8ba0b8")
-	env.ambient_light_energy = 0.42
+	env.ambient_light_color = Color("#858585")
+	env.ambient_light_energy = 0.32
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.environment = env
 	add_child(environment)
@@ -436,8 +436,8 @@ func _build_environment() -> void:
 
 	var fill := OmniLight3D.new()
 	fill.position = Vector3(0, 2.7, 0)
-	fill.light_color = Color("#b9d9ff")
-	fill.light_energy = 0.32
+	fill.light_color = Color("#ffffff")
+	fill.light_energy = 0.18
 	fill.omni_range = 12.0
 	add_child(fill)
 
