@@ -88,7 +88,7 @@ func _on_connected_to_server() -> void:
 		_fail("A porta norte não existe para o teste de falsificação de posição.")
 		return
 	# Tenta declarar uma posição junto à porta e abri-la sem percorrer o trajeto.
-	expedition.rpc_id(1, "_rpc_submit_player_state", multiplayer.get_unique_id(), Vector3(0.0, 0.1, -3.2), 0.0, 0.0)
+	expedition.rpc_id(1, "_rpc_submit_player_state", api.get_unique_id(), Vector3(0.0, 0.1, -3.2), 0.0, 0.0)
 	expedition.rpc_id(1, "_rpc_request_door_toggle", "DoorToNorth", true)
 	probe.rpc_id(1, "door_spoof_attempted")
 	await create_timer(0.3).timeout
