@@ -553,6 +553,16 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	scene.call("_toggle_door_authoritatively", "DoorToNorth")
 	_check(not bool(door.get_meta("open", true)), "O anfitrião fecha a porta sem confiar no estado pedido pelo cliente")
 
+	var remote_key := avatar.get_instance_id() if is_instance_valid(avatar) else 0
+	scene.call("_on_peer_disconnected", 42)
+	_check(not (scene.get("_remote_players") as Dictionary).has(42), "A desconexão remove o avatar remoto do registo")
+	_check(not (scene.get("_remote_targets") as Dictionary).has(42), "A desconexão remove o destino de movimento remoto")
+	_check(not (scene.get("_player_states") as Dictionary).has(42), "A desconexão remove o estado do jogador")
+	_check(not (scene.get("_remote_animation_players") as Dictionary).has(remote_key), "A desconexão limpa o AnimationPlayer remoto")
+	_check(not (scene.get("_remote_animation_names") as Dictionary).has(remote_key), "A desconexão limpa os dados de animação remota")
+	await process_frame
+	_check(not is_instance_valid(avatar), "A desconexão liberta o avatar remoto da cena")
+
 func _test_environment_lighting(scene: Node3D) -> void:
 	var environment: WorldEnvironment
 	var key_light: DirectionalLight3D
