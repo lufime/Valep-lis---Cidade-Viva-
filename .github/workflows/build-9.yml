@@ -229,6 +229,71 @@ jobs:
           print("PASS: ambos os ficheiros do kit modular foram recuperados de arquivos do repositório.")
           PY
 
+      - name: Comparar conteúdo e dependências de todos os ZIPs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/zip-content-audit.txt" <<'PY'
+          import hashlib, pathlib, sys, zipfile, collections
+          root = pathlib.Path(sys.argv[1])
+          report_path = pathlib.Path(sys.argv[2])
+          archives = sorted(root.glob("*.zip"))
+          if not archives:
+              raise SystemExit("FAIL: não foram encontrados ZIPs na raiz do repositório.")
+          contents = {}
+          lines = ["AUDITORIA DE CONTEÚDO DOS ZIPs", "Não foram apagados nem alterados ZIPs.", ""]
+          for archive in archives:
+              try:
+                  with zipfile.ZipFile(archive) as z:
+                      bad = z.testzip()
+                      if bad:
+                          lines.append(f"CORROMPIDO | {archive.name} | primeiro membro inválido: {bad}")
+                          continue
+                      members = {}
+                      for info in z.infolist():
+                          if info.is_dir():
+                              continue
+                          name = info.filename
+                          data = z.read(info)
+                          digest = hashlib.sha256(data).hexdigest()
+                          members[name] = (digest, len(data))
+                      contents[archive.name] = members
+                      lines.append(f"ZIP | {archive.name} | {len(members)} ficheiros")
+              except (OSError, zipfile.BadZipFile) as exc:
+                  lines.append(f"ERRO_LEITURA | {archive.name} | {exc}")
+          lines += ["", "FICHEIROS EXCLUSIVOS POR ZIP (caminho não existe nos outros ZIPs):"]
+          for name, members in contents.items():
+              others = set().union(*(set(v) for k,v in contents.items() if k != name))
+              exclusive = sorted(set(members) - others)
+              lines.append(f"--- {name}: {len(exclusive)} caminhos exclusivos ---")
+              lines.extend(f"  {p} ({members[p][1]} bytes)" for p in exclusive[:250])
+              if len(exclusive) > 250:
+                  lines.append(f"  ... mais {len(exclusive)-250} caminhos exclusivos")
+          lines += ["", "CONTEÚDO IDÊNTICO EM MAIS DE UM ZIP (mesmo caminho e SHA-256):"]
+          path_occurrences = collections.defaultdict(list)
+          for archive, members in contents.items():
+              for path, (digest, size) in members.items():
+                  path_occurrences[path].append((archive, digest, size))
+          duplicate_groups = 0
+          for path, occurrences in sorted(path_occurrences.items()):
+              digests = {item[1] for item in occurrences}
+              if len(occurrences) > 1 and len(digests) == 1:
+                  duplicate_groups += 1
+                  lines.append(f"IGUAL | {path} | " + ", ".join(x[0] for x in occurrences))
+          lines += ["", "MESMO CAMINHO COM CONTEÚDO DIFERENTE (requer decisão; não sobrescrever automaticamente):"]
+          conflict_groups = 0
+          for path, occurrences in sorted(path_occurrences.items()):
+              if len({item[1] for item in occurrences}) > 1:
+                  conflict_groups += 1
+                  lines.append(f"CONFLITO | {path}")
+                  lines.extend(f"  {a} | {size} bytes | sha256={digest}" for a,digest,size in occurrences)
+          lines += ["", f"Resumo: ZIPs lidos={len(contents)}; caminhos iguais idênticos={duplicate_groups}; caminhos com versões diferentes={conflict_groups}.",
+                    "IMPORTANTE: caminho exclusivo não prova que o recurso é desnecessário. Não remover ZIPs sem verificar dependências do projeto."]
+          report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print("\n".join(lines[:40]))
+          print(f"Relatório completo: {report_path}")
+          PY
+
       - name: Auditar limite de 25 MiB por ficheiro
         shell: bash
         run: |
@@ -549,5 +614,6 @@ jobs:
             godot-startup.log
             godot-export.log
             zip-merge-report.txt
+            zip-content-audit.txt
           if-no-files-found: warn
           retention-days: 14
