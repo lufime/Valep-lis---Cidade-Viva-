@@ -500,8 +500,10 @@ func _test_movement_validation(scene: Node3D) -> void:
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(20.0, 0.0, 0.0), 0.05)), "A validação de movimento rejeita teletransporte num único pacote")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(INF, 0.0, 0.0), 0.05)), "A validação de movimento rejeita coordenadas não finitas")
 	_check(not bool(scene.call("_is_client_movement_valid", start, Vector3(0.1, 0.0, 0.0), -1.0)), "A validação de movimento rejeita intervalo temporal inválido")
-	_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, 0), Vector3(0.2, 0.1, 0))), "A validação física aceita deslocação numa zona desimpedida")
-	_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0, 0), Vector3(0, 0, -0.15))), "A cápsula permite movimento horizontal à altura real do chão")
+	var clear_path_test: bool = bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, 0), Vector3(0.2, 0.1, 0)))
+	_check(clear_path_test, "A validação física aceita deslocação numa zona desimpedida")
+	var ground_path_test: bool = bool(scene.call("_is_movement_path_clear", Vector3.ZERO, Vector3(0.0, 0.0, -0.15)))
+	_check(ground_path_test, "A cápsula permite movimento horizontal à altura real do chão")
 	var previous := Vector3(0.0, 0.0, 0.0)
 	var blocked_step := -1
 	for step in range(1, 23):
