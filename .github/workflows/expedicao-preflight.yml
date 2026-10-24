@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: ultima-expedicao-preflight-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   godot-smoke-test:
