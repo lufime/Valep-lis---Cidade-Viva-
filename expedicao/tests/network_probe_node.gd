@@ -33,7 +33,9 @@ func door_spoof_attempted() -> void:
 		return
 	var state: Dictionary = states[sender_id]
 	var authoritative_position: Vector3 = state.position
-	if authoritative_position.distance_to(Vector3(0.0, 0.1, 0.0)) > 0.1:
+	# O jogador pode assentar de y=0.1 para y=0.0 por gravidade; a tentativa
+	# de falsificação só deve falhar se o cliente conseguir deslocar-se horizontalmente.
+	if Vector2(authoritative_position.x, authoritative_position.z).length() > 0.1 or authoritative_position.y < -0.1 or authoritative_position.y > 0.2:
 		push_error("SERVER_DOOR_SPOOF_REJECT_FAIL | O servidor aceitou posição falsificada: %s" % authoritative_position)
 		get_tree().quit(1)
 		return

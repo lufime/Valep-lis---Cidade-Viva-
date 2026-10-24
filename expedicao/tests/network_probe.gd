@@ -173,7 +173,9 @@ func _watch_initial_spawn() -> void:
 				continue
 			var state: Dictionary = states[peer_id]
 			var position: Vector3 = state.position
-			if position.distance_to(Vector3(0.0, 0.1, 0.0)) > 0.05:
+			# A gravidade pode assentar o jogador de y=0.1 para y=0.0;
+			# o teste de spawn deve detetar teleporte horizontal, não essa descida normal.
+			if Vector2(position.x, position.z).length() > 0.05 or position.y < -0.1 or position.y > 0.2:
 				_fail("O anfitrião aceitou a posição inicial falsificada do cliente: %s" % position)
 				return
 		print("SERVER_INITIAL_SPAWN_PASS | O anfitrião impôs a posição inicial de spawn")
