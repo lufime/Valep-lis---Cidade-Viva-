@@ -34,10 +34,7 @@ func _run_probe() -> void:
 
 func _run_server(peer: ENetMultiplayerPeer) -> void:
 	for attempt in range(MAX_ATTEMPTS):
-		var poll_error: Error = peer.poll()
-		if poll_error != OK:
-			_fail("Falha ao consultar o servidor ENet: %s" % poll_error)
-			return
+		peer.poll()
 		if peer.get_available_packet_count() > 0:
 			var packet: PackedByteArray = peer.get_packet()
 			var message: String = packet.get_string_from_utf8()
@@ -60,10 +57,7 @@ func _run_server(peer: ENetMultiplayerPeer) -> void:
 func _run_client(peer: ENetMultiplayerPeer) -> void:
 	var ping_sent := false
 	for attempt in range(MAX_ATTEMPTS):
-		var poll_error: Error = peer.poll()
-		if poll_error != OK:
-			_fail("Falha ao consultar o cliente ENet: %s" % poll_error)
-			return
+		peer.poll()
 		if peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not ping_sent:
 			peer.set_target_peer(1)
 			var send_error: Error = peer.put_packet("PING".to_utf8_buffer())
