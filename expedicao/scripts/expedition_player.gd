@@ -106,9 +106,8 @@ func _interact() -> void:
 	var next_open := not is_open
 	nearby_door.set_meta("open", next_open)
 	# Aplicar a rotação a partir do ângulo fechado guardado, sem acumular erro.
-	nearby_door.rotation = Vector3(
-		nearby_door.rotation.x,
-		closed_yaw + (PI / 2.0 if next_open else 0.0),
-		nearby_door.rotation.z
-	)
+	var target_rotation := nearby_door.rotation
+	target_rotation.y = closed_yaw + (PI / 2.0 if next_open else 0.0)
+	nearby_door.set_rotation(target_rotation)
+	nearby_door.set_meta("current_yaw", target_rotation.y)
 	prompt.text = "[E] Fechar porta" if next_open else "[E] Abrir porta"
