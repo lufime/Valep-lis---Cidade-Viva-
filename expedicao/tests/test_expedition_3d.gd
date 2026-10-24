@@ -508,6 +508,13 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 				var current: Node = stack.pop_back()
 				if current is MeshInstance3D:
 					mesh_count += 1
+					var mesh_instance := current as MeshInstance3D
+					if mesh_instance.mesh != null:
+						for surface_index in range(mesh_instance.mesh.get_surface_count()):
+							var active_material := mesh_instance.get_active_material(surface_index) as StandardMaterial3D
+							if active_material != null:
+								_check(absf(active_material.albedo_color.r - active_material.albedo_color.g) < 0.08 and absf(active_material.albedo_color.g - active_material.albedo_color.b) < 0.08 and active_material.roughness >= 0.75 and active_material.metallic <= 0.1, "O modelo humanoide usa material mate neutro sem dominante jade")
+								break
 				if current is Skeleton3D:
 					skeleton_count += 1
 					_check((current as Skeleton3D).get_bone_count() >= 60, "O modelo humanoide inclui esqueleto articulado")
