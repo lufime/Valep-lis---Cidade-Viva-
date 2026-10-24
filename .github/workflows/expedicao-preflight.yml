@@ -119,9 +119,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=5s 60s \
+          test_log="$(mktemp)"
+          if ! timeout --signal=TERM --kill-after=5s 60s \
             /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
-            --headless --path expedicao --script res://tests/test_expedition_3d.gd
+            --headless --path expedicao --script res://tests/test_expedition_3d.gd 2>&1 | tee "$test_log"; then
+            echo "FAIL | A suite funcional Godot terminou com código diferente de zero."
+            exit 1
+          fi
+          if grep -E "^(ERROR:|SCRIPT ERROR:|Parse Error:)" "$test_log"; then
+            echo "FAIL | A suite funcional contém erros do motor ou do GDScript."
+            exit 1
+          fi
+          grep -qE "TOTAL_PASS=[0-9]+ TOTAL_FAIL=0 TOTAL_SKIP=[0-9]+ RESULTADO=PASS" "$test_log"
 
       - name: Teste ENet entre processos separados
         shell: bash
