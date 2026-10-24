@@ -1,0 +1,51 @@
+name: A Última Expedição — PRE-FLIGHT da nova base
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rebuild/a-ultima-expedicao-zero
+    paths:
+      - "expedicao/**"
+      - ".github/workflows/expedicao-preflight.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultima-expedicao-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  godot-smoke-test:
+    name: Verificar projeto Godot em modo headless
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Instalar Godot 4.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip" \
+            -o /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.5-stable_linux.x86_64
+          echo "/tmp/godot" >> "$GITHUB_PATH"
+
+      - name: Verificar importação e análise do projeto
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          "$godot_bin" --version
+          "$godot_bin" --headless --path expedicao --editor --quit
+
+      - name: Verificar arranque headless
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
+            --headless --path expedicao --quit-after 3
