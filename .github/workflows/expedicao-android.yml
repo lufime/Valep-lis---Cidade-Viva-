@@ -31,10 +31,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Instalar Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
+      - name: Configurar Android SDK sem ação obsoleta
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_path="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$sdk_path/cmdline-tools"
+          echo "ANDROID_HOME=$sdk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk_path" >> "$GITHUB_ENV"
+          echo "$sdk_path/platform-tools" >> "$GITHUB_PATH"
+          sdkmanager_bin="$(find "$sdk_path/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
+          test -x "$sdkmanager_bin"
+          yes | "$sdkmanager_bin" --licenses >/dev/null || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Instalar componentes Android
         shell: bash
