@@ -14,7 +14,7 @@ Esta pasta é uma reconstrução inicial e isolada do projeto. Não substitui ne
 - Jogador local em primeira pessoa, movimento por WASD e olhar pelo rato.
 - Três portas com colisão física, interação por E e passagem física testada quando abertas.
 - Modelo humanoide GLB com esqueleto e clips de repouso, caminhada e corrida para representações remotas.
-- Replicação técnica de posições/orientações e estado das portas, com validação limitada de cadência/distância, spawn inicial imposto pelo anfitrião e testes ENet entre processos separados.
+- Replicação técnica de posições/orientações e estado das portas; o anfitrião impõe o spawn, limita cadência/distância e valida a trajetória com varrimento da cápsula física do jogador contra as colisões do mapa. Os testes ENet em processos separados cobrem também tentativas de teletransporte e de atravessar uma porta fechada em pequenos passos falsificados.
 - Limpeza do avatar e do estado transitório quando um jogador se desconecta.
 - Teste gráfico separado com eventos sintéticos para captura inicial do rato, ESC para libertar e clique esquerdo para recapturar.
 
@@ -23,7 +23,7 @@ Este é apenas um protótipo técnico. **Não é ainda uma versão jogável comp
 ## Limitações e riscos conhecidos
 
 - A rede é apenas uma base técnica: não existe sincronização completa de todas as ações, sistemas e estado do mundo, nem relay, matchmaking ou servidor dedicado.
-- **Autoridade/segurança ainda incompleta:** o anfitrião ignora a posição inicial declarada pelo cliente e rejeita pacotes de movimento demasiado próximos ou com deslocação excessiva, mas continua a receber posições calculadas pelo cliente. Ainda não simula o movimento com `CharacterBody3D`, colisões e gravidade no servidor; um cliente modificado pode tentar atravessar paredes em pequenos passos. A mitigação não equivale a movimento plenamente autoritativo nem a proteção completa contra batota.
+- **Autoridade/segurança ainda incompleta:** o anfitrião ignora a posição inicial declarada pelo cliente, limita cadência/distância e verifica cada segmento recebido com um varrimento da cápsula contra paredes e portas. O teste ENet entre dois processos confirmou a rejeição de teletransporte e de passos falsificados através de uma porta fechada. Mesmo assim, o cliente continua a enviar posições; o servidor ainda não simula o movimento com `CharacterBody3D`, aceleração, gravidade e estado de chão. A validação atual é uma mitigação, não movimento plenamente autoritativo nem proteção completa contra batota; faltam ensaios sob latência/perda de pacotes e com vários clientes.
 - Não existem ainda a criatura de jogo, IA da criatura, sistema do traidor, objetivos secretos, inventário ou missões funcionais.
 - A criatura deve estar presente em todas as partidas e ser controlada exclusivamente pela IA.
 - O traidor deve ser um jogador humano distinto, informado em privado e com objetivos secretos.
