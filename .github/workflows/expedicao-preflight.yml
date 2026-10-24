@@ -182,6 +182,8 @@ jobs:
           grep -q "CLIENT_PASS" "$client_log"
           grep -q "CLIENT_INITIAL_POSITION_SPOOF_SENT" "$client_log"
           grep -q "SERVER_INITIAL_SPAWN_PASS" "$server_log"
+          grep -q "CLIENT_DOOR_SPOOF_GUARD_PASS" "$client_log"
+          grep -q "SERVER_DOOR_SPOOF_REJECT_PASS" "$server_log"
           grep -q "SERVER_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_REPLICATION_PASS" "$client_log"
           grep -q "CLIENT_REMOTE_PLAYER_PASS" "$client_log"

@@ -10,7 +10,7 @@ Este documento descreve apenas a base isolada `expedicao/` e não declara o jogo
 - Criação do jogador, câmara, movimento WASD, colisões e rotação matemática da vista.
 - Passagem física de ida e volta pelas três portas (norte, este e sul), apoio do chão nos corredores e bloqueio das paredes.
 - Criação e desligação de uma sala ENet local.
-- Teste de integração com processos Godot separados: ligação, PING/PONG, posição e orientação do anfitrião replicadas para o cliente, imposição do spawn pelo anfitrião perante uma posição inicial falsificada, posição do cliente recebida pelo anfitrião, criação do avatar remoto, rejeição de pedido de porta por cliente distante, abertura/fecho de porta, rejeição de atualizações de movimento demasiado próximas e rejeição de teletransporte.
+- Teste de integração com processos Godot separados: ligação, PING/PONG, posição e orientação do anfitrião replicadas para o cliente, imposição do spawn perante posição inicial falsificada, rejeição de posição falsificada usada para tentar abrir uma porta, posição do cliente recebida pelo anfitrião, criação do avatar remoto, rejeição de pedido de porta por cliente distante, abertura/fecho de porta, rejeição de atualizações de movimento demasiado próximas e rejeição de teletransporte.
 - Preparação do modelo humanoide com clips CC0 e verificações de importação e seleção de animações idle/walk/locomoção rápida.
 - Teste gráfico separado sob Xvfb para as transições de captura inicial do rato, ESC para libertar e clique esquerdo para recapturar; este teste usa eventos sintéticos, não um dispositivo físico.
 

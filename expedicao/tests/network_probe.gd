@@ -83,6 +83,19 @@ func _on_connected_to_server() -> void:
 	print("CLIENT_INITIAL_POSITION_SPOOF_SENT | A posição declarada no registo é deliberadamente impossível")
 	await create_timer(0.5).timeout
 	local_player.global_position = Vector3(0.0, 0.1, 0.0)
+	var spoof_door := expedition.get_node_or_null("DoorToNorth") as Node3D
+	if spoof_door == null:
+		_fail("A porta norte não existe para o teste de falsificação de posição.")
+		return
+	# Tenta declarar uma posição junto à porta e abri-la sem percorrer o trajeto.
+	expedition.rpc_id(1, "_rpc_submit_player_state", multiplayer.get_unique_id(), Vector3(0.0, 0.1, -3.2), 0.0, 0.0)
+	expedition.rpc_id(1, "_rpc_request_door_toggle", "DoorToNorth", true)
+	probe.rpc_id(1, "door_spoof_attempted")
+	await create_timer(0.3).timeout
+	if bool(spoof_door.get_meta("open", false)):
+		_fail("O anfitrião aceitou posição falsificada para abrir a porta norte.")
+		return
+	print("CLIENT_DOOR_SPOOF_GUARD_PASS | A porta continua fechada após a tentativa de falsificação")
 	await _move_player_gradually(local_player, EXPECTED_CLIENT_POSITION)
 	print("CLIENT_MOVED | Posição de teste enviada gradualmente para replicação")
 	var remote_host: Node3D

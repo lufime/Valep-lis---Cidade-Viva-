@@ -13,6 +13,33 @@ func ping() -> void:
 func pong() -> void:
 	print("CLIENT_PASS | PONG recebido do servidor")
 
+@rpc("any_peer", "call_remote", "reliable")
+func door_spoof_attempted() -> void:
+	if not multiplayer.is_server():
+		push_error("SERVER_DOOR_SPOOF_REJECT_FAIL | O aviso chegou a um processo que não é anfitrião.")
+		get_tree().quit(1)
+		return
+	var sender_id := multiplayer.get_remote_sender_id()
+	await get_tree().create_timer(0.3).timeout
+	var scene := get_tree().root.get_node_or_null("Expedition3D") as Node3D
+	var door := scene.get_node_or_null("DoorToNorth") as Node3D if scene != null else null
+	var states: Dictionary = scene.get("_player_states") if scene != null else {}
+	if door == null or not states.has(sender_id):
+		push_error("SERVER_DOOR_SPOOF_REJECT_FAIL | Faltam porta ou estado do cliente após a tentativa.")
+		get_tree().quit(1)
+		return
+	var state: Dictionary = states[sender_id]
+	var authoritative_position: Vector3 = state.position
+	if authoritative_position.distance_to(Vector3(0.0, 0.1, 0.0)) > 0.1:
+		push_error("SERVER_DOOR_SPOOF_REJECT_FAIL | O servidor aceitou posição falsificada: %s" % authoritative_position)
+		get_tree().quit(1)
+		return
+	if bool(door.get_meta("open", false)):
+		push_error("SERVER_DOOR_SPOOF_REJECT_FAIL | A porta abriu após a tentativa de falsificação.")
+		get_tree().quit(1)
+		return
+	print("SERVER_DOOR_SPOOF_REJECT_PASS | O anfitrião manteve o estado no spawn e rejeitou a abertura falsificada")
+
 @rpc("authority", "call_remote", "reliable")
 func replication_ack() -> void:
 	print("CLIENT_ACK_PASS | O cliente recebeu confirmação do anfitrião")
