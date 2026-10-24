@@ -293,6 +293,31 @@ jobs:
           print(f"DOOR_ZONE_REFERENCE_LINES={hits}")
           PY
 
+      - name: Diagnosticar construção real das salas e portas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$PROJECT_DIR/scripts/expedition.gd" "$PROJECT_DIR" <<'PY'
+          import pathlib, re, sys
+          script = pathlib.Path(sys.argv[1])
+          source = script.read_text(encoding="utf-8", errors="replace").splitlines()
+          targets = re.compile(r"^func .*(_build_room|_build_door|zone|corridor|door|room|passage|transition|wall|level|station)", re.I)
+          print("=== FUNÇÕES DE CONSTRUÇÃO / ZONAS ===")
+          starts = [i for i, line in enumerate(source) if targets.search(line.strip())]
+          for start in starts:
+              end = start + 1
+              while end < len(source) and (not source[end].startswith("func ") or source[end].startswith("func _")):
+                  end += 1
+              print(f"--- expedition.gd:{start+1}-{min(end, start+100)} ---")
+              for i in range(start, min(end, start+100)):
+                  print(f"{i+1}: {source[i]}")
+          print("=== CENAS E MODELOS COM NOMES RELACIONADOS ===")
+          root = pathlib.Path(sys.argv[2])
+          for p in sorted(root.rglob("*")):
+              if p.is_file() and p.suffix.lower() in {".tscn", ".tres", ".gd"} and re.search(r"door|zone|room|corridor|station|level|expedition|porta|zona|sala", p.name, re.I):
+                  print(f"{p.relative_to(root)} ({p.stat().st_size} bytes)")
+          PY
+
       - name: Verificar ficheiros essenciais e versão
         shell: bash
         run: |
