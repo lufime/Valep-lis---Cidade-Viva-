@@ -18,6 +18,7 @@ var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
 var _last_server_sync_msec: Dictionary = {}
 var _sync_elapsed := 0.0
+var _local_peer_id := 1
 
 func _process(delta: float) -> void:
 	var blend := 1.0 - exp(-12.0 * delta)
@@ -43,7 +44,7 @@ func _process(delta: float) -> void:
 	# get_unique_id() quando o peer ENet já não está ativo.
 	var peer_id := 1
 	if connection_active:
-		peer_id = multiplayer.get_unique_id()
+		peer_id = _local_peer_id
 	var state := {"position": _local_player.global_position, "yaw": _local_player.rotation.y, "pitch": float(_local_player.get("pitch"))}
 	_player_states[peer_id] = state
 	if not connection_active:
@@ -56,6 +57,7 @@ func _process(delta: float) -> void:
 func _register_with_host() -> void:
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
 		var p := multiplayer.get_unique_id()
+		_local_peer_id = p
 		_rpc_register_player.rpc_id(1, p, _local_player.global_position, _local_player.rotation.y, float(_local_player.get("pitch")))
 
 @rpc("any_peer", "call_remote", "reliable")
