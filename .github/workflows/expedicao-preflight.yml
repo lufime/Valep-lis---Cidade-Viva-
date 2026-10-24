@@ -65,3 +65,52 @@ jobs:
           timeout --signal=TERM --kill-after=5s 60s \
             /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
             --headless --path expedicao --script res://tests/test_expedition_3d.gd
+
+      - name: Teste ENet entre processos separados
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          server_log="$(mktemp)"
+          client_log="$(mktemp)"
+          "$godot_bin" --headless --path expedicao --script res://tests/network_probe.gd -- server >"$server_log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+            rm -f "$server_log" "$client_log"
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 100); do
+            if grep -q "SERVER_READY" "$server_log"; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat "$server_log"
+              exit 1
+            fi
+            sleep 0.1
+          done
+
+          if ! grep -q "SERVER_READY" "$server_log"; then
+            cat "$server_log"
+            echo "FAIL | O servidor ENet não ficou pronto."
+            exit 1
+          fi
+
+          if ! timeout --signal=TERM --kill-after=2s 15s "$godot_bin" --headless --path expedicao --script res://tests/network_probe.gd -- client >"$client_log" 2>&1; then
+            cat "$server_log"
+            cat "$client_log"
+            exit 1
+          fi
+
+          if ! wait "$server_pid"; then
+            cat "$server_log"
+            cat "$client_log"
+            exit 1
+          fi
+
+          cat "$server_log"
+          cat "$client_log"
+          grep -q "SERVER_PASS" "$server_log"
+          grep -q "CLIENT_PASS" "$client_log"
