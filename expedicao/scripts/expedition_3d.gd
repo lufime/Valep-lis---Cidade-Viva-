@@ -473,6 +473,45 @@ func _build_map() -> void:
 	_add_box("EastCrate", Vector3(14.5, 0.55, 2.5), Vector3(1.2, 1.1, 1.2), Color("#75634d"))
 	_add_box("SouthTable", Vector3(1.8, 0.8, 13.5), Vector3(2.2, 1.6, 1.0), Color("#4c555d"))
 
+	# Molduras arquitetónicas visíveis em torno das três ligações.
+	var frame_color := Color("#8da7b5")
+	var frame_dark := Color("#263744")
+	for z_pos in [-5.0, 5.0]:
+		for x_pos in [-1.2, 1.2]:
+			_add_box("DoorFramePost_%s_%s" % [str(z_pos), str(x_pos)], Vector3(x_pos, 1.35, z_pos), Vector3(0.16, 2.7, 0.24), frame_color)
+		_add_box("DoorFrameHeader_%s" % str(z_pos), Vector3(0, 2.72, z_pos), Vector3(2.55, 0.16, 0.24), frame_color)
+		_add_box("DoorFrameThreshold_%s" % str(z_pos), Vector3(0, 0.025, z_pos), Vector3(2.2, 0.05, 0.42), frame_dark)
+	for z_pos in [-1.2, 1.2]:
+		_add_box("DoorFramePostEast_%s" % str(z_pos), Vector3(5.0, 1.35, z_pos), Vector3(0.24, 2.7, 0.16), frame_color)
+	_add_box("DoorFrameHeaderEast", Vector3(5.0, 2.72, 0), Vector3(0.24, 0.16, 2.55), frame_color)
+	_add_box("DoorFrameThresholdEast", Vector3(5.0, 0.025, 0), Vector3(0.42, 0.05, 2.2), frame_dark)
+
+	# Iluminação técnica e sinalética das zonas.
+	_add_detail_box("CeilingLightCentral", Vector3(0, 2.86, 0), Vector3(2.4, 0.06, 0.28), Color("#d6efff"), 0.18)
+	_add_detail_box("CeilingLightNorth", Vector3(0, 2.86, -12), Vector3(2.4, 0.06, 0.28), Color("#d6efff"), 0.18)
+	_add_detail_box("CeilingLightEast", Vector3(12, 2.86, 0), Vector3(0.28, 0.06, 2.4), Color("#d6efff"), 0.18)
+	_add_detail_box("CeilingLightSouth", Vector3(0, 2.86, 12), Vector3(2.4, 0.06, 0.28), Color("#d6efff"), 0.18)
+	_add_detail_box("NorthZoneSign", Vector3(0, 2.45, -4.72), Vector3(1.25, 0.24, 0.06), Color("#214c63"), 0.35)
+	_add_detail_box("EastZoneSign", Vector3(4.72, 2.45, 0), Vector3(0.06, 0.24, 1.25), Color("#214c63"), 0.35)
+	_add_detail_box("SouthZoneSign", Vector3(0, 2.45, 4.72), Vector3(1.25, 0.24, 0.06), Color("#214c63"), 0.35)
+
+func _add_detail_box(label: String, pos: Vector3, size: Vector3, color: Color, emission: float = 0.0) -> void:
+	var detail := MeshInstance3D.new()
+	detail.name = label
+	detail.position = pos
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	detail.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.42
+	if emission > 0.0:
+		material.emission_enabled = true
+		material.emission = color
+		material.emission_energy_multiplier = emission
+	detail.material_override = material
+	add_child(detail)
+
 func _add_box(label: String, pos: Vector3, size: Vector3, color: Color) -> void:
 	var body := StaticBody3D.new()
 	body.name = label
