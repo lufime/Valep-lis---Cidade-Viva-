@@ -53,11 +53,23 @@ func _run_tests() -> void:
 		Vector3(0, 0.1, 3.5), Vector3(0, 0, 0.1)
 	)
 
+	await _test_connector_floor_support(scene, player)
 	await _test_player_navigation(scene, player)
 	await _test_main_menu()
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
 	_finish()
+
+func _test_connector_floor_support(scene: Node3D, player: CharacterBody3D) -> void:
+	var connectors := [
+		{"name": "norte", "point": Vector3(0, 1, -6)},
+		{"name": "este", "point": Vector3(6, 1, 0)},
+		{"name": "sul", "point": Vector3(0, 1, 6)}
+	]
+	for connector in connectors:
+		var point: Vector3 = connector["point"]
+		var hit := _raycast(scene, player, point, point + Vector3(0, -2, 0))
+		_check(not hit.is_empty(), "A ligação " + str(connector["name"]) + " tem chão contínuo sob a passagem")
 
 func _test_player_navigation(scene: Node3D, player: CharacterBody3D) -> void:
 	player.position = Vector3.ZERO
