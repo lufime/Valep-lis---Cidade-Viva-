@@ -394,6 +394,25 @@ jobs:
           fi
           echo "PASS: o processo de importação terminou sem erros explícitos e gerou índices Godot; arranque e exportação serão validados separadamente."
 
+      - name: Diagnosticar contexto do erro GDScript conhecido
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${PROJECT_DIR:-}" ] && [ -f "$PROJECT_DIR/scripts/expedition.gd" ]; then
+            python - "$PROJECT_DIR/scripts/expedition.gd" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          lines = p.read_text(encoding="utf-8").splitlines()
+          start, end = 1775, 1805
+          print(f"--- CONTEXTO {p} linhas {start}-{end} (total {len(lines)}) ---")
+          for i in range(start, min(end, len(lines)) + 1):
+              print(f"{i}: {lines[i-1]}")
+          PY
+          else
+            echo "O ficheiro fonte não está disponível para diagnóstico nesta etapa."
+          fi
+
       - name: Teste de arranque headless
         shell: bash
         run: |
