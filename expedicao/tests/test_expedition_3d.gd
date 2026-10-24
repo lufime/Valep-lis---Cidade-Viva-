@@ -514,17 +514,23 @@ func _test_movement_validation(scene: Node3D) -> void:
 		previous = target
 	_check(blocked_step == -1, "A cápsula permite o percurso normal até à zona da porta (passo bloqueado: %d)" % blocked_step)
 	_check(not bool(scene.call("_is_movement_path_clear", Vector3(4.3, 0.1, 3.0), Vector3(5.2, 0.1, 3.0))), "A cápsula física rejeita movimento através de uma parede")
-	var north_door := scene.get_node_or_null("DoorToNorth") as Node3D
-	_check(north_door != null, "A porta norte existe para validar a trajetória física")
-	if north_door != null:
-		scene.call("_apply_door_state", "DoorToNorth", false)
-		await physics_frame
-		_check(not bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, -4.0), Vector3(0, 0.1, -6.5))), "A cápsula física rejeita atravessar a porta norte fechada")
-		scene.call("_apply_door_state", "DoorToNorth", true)
-		await physics_frame
-		_check(bool(scene.call("_is_movement_path_clear", Vector3(0, 0.1, -4.0), Vector3(0, 0.1, -6.5))), "A cápsula física permite passar pela porta norte aberta")
-		scene.call("_apply_door_state", "DoorToNorth", false)
-		await physics_frame
+	await _test_authoritative_door_path(scene, "DoorToNorth", "norte", Vector3(0, 0.1, -4.0), Vector3(0, 0.1, -6.5))
+	await _test_authoritative_door_path(scene, "DoorToEast", "este", Vector3(4.0, 0.1, 0.0), Vector3(6.5, 0.1, 0.0))
+	await _test_authoritative_door_path(scene, "DoorToSouth", "sul", Vector3(0.0, 0.1, 4.0), Vector3(0.0, 0.1, 6.5))
+
+func _test_authoritative_door_path(scene: Node3D, door_name: String, direction_name: String, start: Vector3, target: Vector3) -> void:
+	var door := scene.get_node_or_null(door_name) as Node3D
+	_check(door != null, "A porta " + direction_name + " existe para validar a trajetória física")
+	if door == null:
+		return
+	scene.call("_apply_door_state", door_name, false)
+	await physics_frame
+	_check(not bool(scene.call("_is_movement_path_clear", start, target)), "A cápsula física rejeita atravessar a porta " + direction_name + " fechada")
+	scene.call("_apply_door_state", door_name, true)
+	await physics_frame
+	_check(bool(scene.call("_is_movement_path_clear", start, target)), "A cápsula física permite passar pela porta " + direction_name + " aberta")
+	scene.call("_apply_door_state", door_name, false)
+	await physics_frame
 
 func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var door := scene.get_node_or_null("DoorToNorth") as Node3D
