@@ -180,7 +180,8 @@ func _watch_server_replication() -> void:
 									_fail("O anfitrião aceitou uma posição teletransportada do cliente: %s" % final_position)
 									return
 								print("SERVER_TELEPORT_REJECT_PASS | O anfitrião manteve a última posição válida após o pedido de teletransporte")
-								await create_timer(0.05).timeout
+								probe.rpc_id(int(peer_id), "teleport_reject_ack")
+								await create_timer(0.2).timeout
 								quit(0)
 								return
 						_fail("O anfitrião não recebeu nem aplicou o pedido de fecho da porta do cliente.")

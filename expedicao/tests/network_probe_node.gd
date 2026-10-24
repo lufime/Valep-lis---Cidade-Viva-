@@ -38,6 +38,8 @@ func close_replication_ack() -> void:
 	var player_id := multiplayer.get_unique_id()
 	scene.rpc_id(1, "_rpc_sync_player", player_id, Vector3(50.0, 0.1, 50.0), 0.0, 0.0)
 	print("CLIENT_TELEPORT_ATTEMPT_SENT | O cliente enviou uma posição impossível para verificar a rejeição do anfitrião")
-	# Mantém a ligação ativa até o anfitrião verificar que rejeitou o teletransporte.
-	await get_tree().create_timer(1.0).timeout
+
+@rpc("authority", "call_remote", "reliable")
+func teleport_reject_ack() -> void:
+	print("CLIENT_TELEPORT_REJECT_ACK_PASS | O cliente recebeu confirmação da rejeição do anfitrião")
 	get_tree().quit(0)
