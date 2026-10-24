@@ -55,6 +55,7 @@ func _run_tests() -> void:
 
 	await _test_connector_floor_support(scene, player)
 	await _test_player_navigation(scene, player)
+	await _test_outer_wall_collisions(player)
 	await _test_main_menu()
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
@@ -91,6 +92,35 @@ func _test_player_navigation(scene: Node3D, player: CharacterBody3D) -> void:
 	await physics_frame
 	_walk_steps(player, Vector3(-0.1, 0, 0), 20)
 	_check(player.position.x < -4.2 and player.position.x > -4.8, "A colisão da parede oeste impede o jogador de atravessar a parede")
+
+func _test_outer_wall_collisions(player: CharacterBody3D) -> void:
+	await _test_wall_collision(player, "parede oeste da zona norte", Vector3(-4.2, 0.1, -12), Vector3(-0.1, 0, 0), "x", -4.8, false)
+	await _test_wall_collision(player, "parede este da zona norte", Vector3(4.2, 0.1, -12), Vector3(0.1, 0, 0), "x", 4.8, true)
+	await _test_wall_collision(player, "parede de fundo da zona norte", Vector3(0, 0.1, -16.2), Vector3(0, 0, -0.1), "z", -16.8, false)
+	await _test_wall_collision(player, "parede superior da zona este", Vector3(12, 0.1, -4.2), Vector3(0, 0, -0.1), "z", -4.8, false)
+	await _test_wall_collision(player, "parede inferior da zona este", Vector3(12, 0.1, 4.2), Vector3(0, 0, 0.1), "z", 4.8, true)
+	await _test_wall_collision(player, "parede de fundo da zona este", Vector3(16.2, 0.1, 0), Vector3(0.1, 0, 0), "x", 16.8, true)
+	await _test_wall_collision(player, "parede oeste da zona sul", Vector3(-4.2, 0.1, 12), Vector3(-0.1, 0, 0), "x", -4.8, false)
+	await _test_wall_collision(player, "parede este da zona sul", Vector3(4.2, 0.1, 12), Vector3(0.1, 0, 0), "x", 4.8, true)
+	await _test_wall_collision(player, "parede de fundo da zona sul", Vector3(0, 0.1, 16.2), Vector3(0, 0, 0.1), "z", 16.8, true)
+
+func _test_wall_collision(
+	player: CharacterBody3D,
+	wall_name: String,
+	start: Vector3,
+	motion: Vector3,
+	axis: String,
+	boundary: float,
+	toward_positive: bool
+) -> void:
+	player.position = start
+	await physics_frame
+	_walk_steps(player, motion, 20)
+	var start_value: float = start.x if axis == "x" else start.z
+	var final_value: float = player.position.x if axis == "x" else player.position.z
+	var moved_toward_wall: bool = final_value > start_value if toward_positive else final_value < start_value
+	var stayed_inside: bool = final_value < boundary if toward_positive else final_value > boundary
+	_check(moved_toward_wall and stayed_inside, "A colisão impede atravessar a " + wall_name)
 
 func _test_main_menu() -> void:
 	var menu_scene := load("res://scenes/main.tscn") as PackedScene
