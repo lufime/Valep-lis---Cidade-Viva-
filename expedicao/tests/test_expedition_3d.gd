@@ -139,7 +139,14 @@ func _test_multiplayer_connection() -> void:
 	var host_players_label := host_menu.get("players_label") as Label
 	_check(host_players_label != null and host_players_label.text == "Jogadores ligados: 2", "O anfitrião atualiza a contagem para dois jogadores")
 	var client_status_label := client_menu.get("status_label") as Label
-	_check(client_status_label != null and client_status_label.text.contains("Ligação ao anfitrião estabelecida."), "O cliente apresenta a ligação estabelecida")
+	var client_status_ready := false
+	for attempt in range(20):
+		await process_frame
+		if client_status_label != null and client_status_label.text.contains("Ligação ao anfitrião estabelecida."):
+			client_status_ready = true
+			break
+	var client_status_text := client_status_label.text if client_status_label != null else "<sem etiqueta de estado>"
+	_check(client_status_ready, "O cliente apresenta a ligação estabelecida (estado atual: %s)" % client_status_text)
 
 	client_menu.call("_disconnect_game")
 	var disconnected := false
