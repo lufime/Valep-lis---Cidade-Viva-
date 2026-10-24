@@ -437,6 +437,11 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var avatar := scene.get_node_or_null("RemotePlayer_42") as Node3D
 	_check(avatar != null, "Um jogador remoto cria uma representação visual")
 	if avatar != null:
+		_check(avatar.get_node_or_null("Head") is MeshInstance3D, "O avatar remoto tem cabeça modelada")
+		_check(avatar.get_node_or_null("Torso") is MeshInstance3D, "O avatar remoto tem tronco modelado")
+		_check(avatar.get_node_or_null("ArmLeft") is MeshInstance3D and avatar.get_node_or_null("ArmRight") is MeshInstance3D, "O avatar remoto tem os dois braços")
+		_check(avatar.get_node_or_null("LegLeft") is MeshInstance3D and avatar.get_node_or_null("LegRight") is MeshInstance3D, "O avatar remoto tem as duas pernas")
+		_check(avatar.get_node_or_null("BootLeft") is MeshInstance3D and avatar.get_node_or_null("BootRight") is MeshInstance3D, "O avatar remoto tem botas")
 		var initial_position := avatar.global_position
 		scene.call("_apply_remote_position", 42, Vector3(4, 0.1, 5), 1.0, 0.2)
 		_check((scene.get("_remote_targets") as Dictionary).has(42), "A posição recebida fica definida como destino de movimento")

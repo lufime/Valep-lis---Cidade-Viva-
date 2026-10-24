@@ -67,22 +67,69 @@ func _add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: floa
 	if not is_instance_valid(avatar):
 		avatar = Node3D.new()
 		avatar.name = "RemotePlayer_%d" % peer_id
-		var mesh_instance := MeshInstance3D.new()
-		var mesh := CapsuleMesh.new()
-		mesh.radius = 0.38
-		mesh.height = 1.8
-		mesh_instance.mesh = mesh
-		var material := StandardMaterial3D.new()
-		material.albedo_color = REMOTE_PLAYER_COLOR
-		material.roughness = 0.7
-		mesh_instance.material_override = material
-		mesh_instance.position.y = 0.9
-		avatar.add_child(mesh_instance)
+		_build_remote_avatar(avatar)
 		add_child(avatar)
 		_remote_players[peer_id] = avatar
 	avatar.global_position = position
 	avatar.rotation.y = yaw
 	_remote_targets[peer_id] = state
+
+func _build_remote_avatar(avatar: Node3D) -> void:
+	# Modelo humanoide procedural de protótipo: cabeça, tronco, braços, pernas e botas.
+	# Mantém o avatar leve e sem dependências de assets externos.
+	var torso := CapsuleMesh.new()
+	torso.radius = 0.25
+	torso.height = 0.82
+	_make_remote_avatar_part(avatar, "Torso", torso, Vector3(0, 1.15, 0), REMOTE_PLAYER_COLOR)
+
+	var head := SphereMesh.new()
+	head.radius = 0.19
+	head.height = 0.38
+	_make_remote_avatar_part(avatar, "Head", head, Vector3(0, 1.78, 0), Color("#d6a078"))
+
+	var left_arm := CapsuleMesh.new()
+	left_arm.radius = 0.095
+	left_arm.height = 0.68
+	_make_remote_avatar_part(avatar, "ArmLeft", left_arm, Vector3(-0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, -0.12))
+
+	var right_arm := CapsuleMesh.new()
+	right_arm.radius = 0.095
+	right_arm.height = 0.68
+	_make_remote_avatar_part(avatar, "ArmRight", right_arm, Vector3(0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, 0.12))
+
+	var left_leg := CapsuleMesh.new()
+	left_leg.radius = 0.13
+	left_leg.height = 0.78
+	_make_remote_avatar_part(avatar, "LegLeft", left_leg, Vector3(-0.15, 0.48, 0), Color("#303d50"))
+
+	var right_leg := CapsuleMesh.new()
+	right_leg.radius = 0.13
+	right_leg.height = 0.78
+	_make_remote_avatar_part(avatar, "LegRight", right_leg, Vector3(0.15, 0.48, 0), Color("#303d50"))
+
+	var boot := BoxMesh.new()
+	boot.size = Vector3(0.23, 0.13, 0.34)
+	_make_remote_avatar_part(avatar, "BootLeft", boot, Vector3(-0.15, 0.09, -0.055), Color("#171c22"))
+	_make_remote_avatar_part(avatar, "BootRight", boot, Vector3(0.15, 0.09, -0.055), Color("#171c22"))
+
+func _make_remote_avatar_part(
+	avatar: Node3D,
+	part_name: String,
+	mesh: Mesh,
+	part_position: Vector3,
+	color: Color,
+	part_rotation: Vector3 = Vector3.ZERO
+) -> void:
+	var part := MeshInstance3D.new()
+	part.name = part_name
+	part.mesh = mesh
+	part.position = part_position
+	part.rotation = part_rotation
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.72
+	part.material_override = material
+	avatar.add_child(part)
 
 @rpc("any_peer", "call_remote", "unreliable")
 func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
