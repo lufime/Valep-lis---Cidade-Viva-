@@ -120,6 +120,25 @@ jobs:
           unzip -t build/A-Ultima-Expedicao-debug.apk
           echo "APK_EXPORT_PASS | APK de depuração exportada e ZIP validado"
 
+      - name: Verificar assinatura e manifesto do APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="build/A-Ultima-Expedicao-debug.apk"
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          aapt="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          test -s "$apk"
+          test -x "$apksigner"
+          test -x "$aapt"
+          "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner-verify.log
+          grep -qi "^Verifies$" /tmp/apksigner-verify.log
+          "$aapt" dump badging "$apk" > /tmp/apk-badging.txt
+          grep -Fq "package: name='com.lufime.ultimaexpedicao'" /tmp/apk-badging.txt
+          grep -Fq "versionCode='1'" /tmp/apk-badging.txt
+          grep -Fq "versionName='0.1.0'" /tmp/apk-badging.txt
+          echo "APK_SIGNATURE_PASS | apksigner verificou a assinatura"
+          echo "APK_MANIFEST_PASS | package name e versão confirmados"
+
       - name: Publicar APK de teste
         uses: actions/upload-artifact@v4
         with:
