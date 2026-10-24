@@ -331,6 +331,8 @@ func _rpc_submit_player_state(peer_id: int, position: Vector3, yaw: float, pitch
 	var elapsed_seconds := float(now_msec - last_msec) / 1000.0
 	if not _is_client_movement_valid(previous_state.position, position, elapsed_seconds):
 		return
+	if not _is_movement_path_clear(previous_state.position, position):
+		return
 	if not is_finite(yaw) or not is_finite(pitch) or absf(pitch) > 1.5:
 		return
 	_last_server_sync_msec[peer_id] = now_msec
@@ -459,6 +461,21 @@ func _is_client_movement_valid(previous_position: Vector3, new_position: Vector3
 	var bounded_elapsed := minf(elapsed_seconds, PLAYER_SYNC_INTERVAL)
 	var maximum_distance := CLIENT_MOVEMENT_SPEED * bounded_elapsed + CLIENT_MOVEMENT_DISTANCE_TOLERANCE
 	return previous_position.distance_to(new_position) <= maximum_distance
+
+func _is_movement_path_clear(previous_position: Vector3, new_position: Vector3) -> bool:
+	# Verifica no mundo físico do anfitrião que o segmento não atravessa paredes/portas.
+	# O cliente não pode contornar colisões enviando coordenadas plausíveis em pequenos passos.
+	var world := get_world_3d()
+	if world == null:
+		return false
+	var query := PhysicsRayQueryParameters3D.create(
+		previous_position + Vector3.UP,
+		new_position + Vector3.UP
+	)
+	if is_instance_valid(_local_player):
+		query.exclude = [_local_player.get_rid()]
+	var hit := world.direct_space_state.intersect_ray(query)
+	return hit.is_empty()
 
 func _build_environment() -> void:
 	var environment := WorldEnvironment.new()
