@@ -15,46 +15,97 @@ func _run_tests() -> void:
 	var scene := packed.instantiate()
 	root.add_child(scene)
 	await process_frame
+	await physics_frame
 
-	_check(scene.get_node_or_null("LocalPlayer") != null, "A cena deve criar o jogador local")
+	var player := scene.get_node_or_null("LocalPlayer") as CharacterBody3D
+	_check(player != null, "A cena deve criar o jogador local")
 	_check(scene.get_node_or_null("CentralFloor") != null, "A cena deve criar a sala central")
 	_check(scene.get_node_or_null("NorthRoomFloor") != null, "A cena deve criar a zona norte")
 	_check(scene.get_node_or_null("EastRoomFloor") != null, "A cena deve criar a zona este")
 	_check(scene.get_node_or_null("SouthRoomFloor") != null, "A cena deve criar a zona sul")
+	_check(scene.get_node_or_null("DoorToNorth") != null, "A ligação norte deve ter porta")
+	_check(scene.get_node_or_null("DoorToEast") != null, "A ligação este deve ter porta")
+	_check(scene.get_node_or_null("DoorToSouth") != null, "A ligação sul deve ter porta")
 
-	var player: Node = scene.get_node_or_null("LocalPlayer")
-	var door_names := ["DoorToNorth", "DoorToEast", "DoorToSouth"]
-	var target_floors := ["NorthRoomFloor", "EastRoomFloor", "SouthRoomFloor"]
-	for i in range(door_names.size()):
-		var door: Node3D = scene.get_node_or_null(door_names[i]) as Node3D
-		_check(door != null, "A ligação " + door_names[i] + " deve ter porta")
-		_check(scene.get_node_or_null(target_floors[i]) != null, "A ligação " + door_names[i] + " deve ter uma zona de destino")
-		if door == null or player == null:
-			continue
+	if player == null:
+		_finish()
+		return
 
-		_check(door.has_meta("is_door"), door_names[i] + " deve estar marcada como porta")
-		_check(door.get_node_or_null("DoorCollider") != null, door_names[i] + " deve ter colisão física")
-		var initial_yaw: float = door.rotation.y
-		player.set("nearby_door", door)
-		player.call("_interact")
-		door.force_update_transform()
-		_check(bool(door.get_meta("open", false)), door_names[i] + " deve abrir ao interagir")
-		var opened_yaw: float = door.rotation.y
-		_check(absf(wrapf(opened_yaw - initial_yaw, -PI, PI)) > 0.1, door_names[i] + " deve rodar ao abrir")
-		var collider: Node3D = door.get_node_or_null("DoorCollider") as Node3D
-		if collider != null:
-			_check(collider.global_position.distance_to(door.global_position) < 0.1, door_names[i] + " deve mover a colisão com a porta")
-		player.call("_interact")
-		door.force_update_transform()
-		_check(not bool(door.get_meta("open", true)), door_names[i] + " deve fechar na segunda interação")
-		_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) < 0.1, door_names[i] + " deve regressar à rotação inicial")
+	player.set_physics_process(false)
+	_check(scene.has_node("LocalPlayer/PlayerCamera"), "O jogador deve ter câmara em primeira pessoa")
 
-	if scene.has_node("LocalPlayer/PlayerCamera"):
-		_check(true, "O jogador deve ter câmara em primeira pessoa")
-	else:
-		_check(false, "O jogador deve ter câmara em primeira pessoa")
+	await _test_door_passage(
+		scene, player, "DoorToNorth", "norte",
+		Vector3(0, 0.1, -3.2), 0.0,
+		Vector3(0, 1.0, -3.5), Vector3(0, 1.0, -6.5)
+	)
+	await _test_door_passage(
+		scene, player, "DoorToEast", "este",
+		Vector3(3.2, 0.1, 0), -PI / 2.0,
+		Vector3(3.5, 1.0, 0), Vector3(6.5, 1.0, 0)
+	)
+	await _test_door_passage(
+		scene, player, "DoorToSouth", "sul",
+		Vector3(0, 0.1, 3.2), PI,
+		Vector3(0, 1.0, 3.5), Vector3(0, 1.0, 6.5)
+	)
 
 	_finish()
+
+func _test_door_passage(
+	scene: Node3D,
+	player: CharacterBody3D,
+	door_name: String,
+	direction_name: String,
+	player_position: Vector3,
+	player_yaw: float,
+	ray_from: Vector3,
+	ray_to: Vector3
+) -> void:
+	var door := scene.get_node_or_null(door_name) as Node3D
+	if door == null:
+		_check(false, "A porta " + direction_name + " existe para o teste de passagem")
+		return
+
+	player.position = player_position
+	player.rotation.y = player_yaw
+	await physics_frame
+	player.call("_update_door_prompt")
+	_check(player.get("nearby_door") == door, "O jogador identifica a porta " + direction_name + " pela colisão")
+
+	var closed_hit := _raycast(scene, player, ray_from, ray_to)
+	_check(_is_door_hit(closed_hit), "A porta " + direction_name + " bloqueia a passagem quando fechada")
+
+	var initial_yaw: float = door.rotation.y
+	player.set("nearby_door", door)
+	player.call("_interact")
+	await physics_frame
+	await physics_frame
+	_check(bool(door.get_meta("open", false)), "A interação abre a porta " + direction_name)
+	_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) > 0.1, "A porta " + direction_name + " roda ao abrir")
+
+	var open_hit := _raycast(scene, player, ray_from, ray_to)
+	_check(open_hit.is_empty(), "A passagem " + direction_name + " fica desimpedida com a porta aberta")
+
+	player.call("_interact")
+	await physics_frame
+	await physics_frame
+	_check(not bool(door.get_meta("open", true)), "Uma segunda interação fecha a porta " + direction_name)
+	_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) < 0.1, "A porta " + direction_name + " regressa à rotação inicial")
+
+	var closed_again_hit := _raycast(scene, player, ray_from, ray_to)
+	_check(_is_door_hit(closed_again_hit), "A passagem " + direction_name + " volta a ficar bloqueada ao fechar")
+
+func _raycast(scene: Node3D, player: CharacterBody3D, ray_from: Vector3, ray_to: Vector3) -> Dictionary:
+	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+	query.exclude = [player.get_rid()]
+	return scene.get_world_3d().direct_space_state.intersect_ray(query)
+
+func _is_door_hit(hit: Dictionary) -> bool:
+	if hit.is_empty():
+		return false
+	var collider: Object = hit.get("collider")
+	return collider is Node and (collider as Node).has_meta("is_door")
 
 func _check(condition: bool, message: String) -> void:
 	if condition:
@@ -65,7 +116,7 @@ func _check(condition: bool, message: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("RESULTADO=PASS | Todos os testes funcionais da cena 3D passaram.")
+		print("RESULTADO=PASS | Todas as verificações da cena 3D, deteção das portas e passagens passaram.")
 		quit(0)
 	else:
 		push_error("RESULTADO=FAIL | ", failures.size(), " teste(s) falharam.")
