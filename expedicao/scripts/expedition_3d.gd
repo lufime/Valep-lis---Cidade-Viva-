@@ -2,6 +2,149 @@ extends Node3D
 
 const PLAYER_SCENE_SCRIPT := "res://scripts/expedition_player.gd"
 
+const REMOTE_PLAYER_COLOR := Color("#e2a35c")
+const PLAYER_SYNC_INTERVAL := 0.05
+
+var _local_player: CharacterBody3D
+var _remote_players: Dictionary = {}
+var _player_states: Dictionary = {}
+var _sync_elapsed := 0.0
+
+func _process(delta: float) -> void:
+	if not is_instance_valid(_local_player):
+		return
+	_sync_elapsed += delta
+	if _sync_elapsed < PLAYER_SYNC_INTERVAL:
+		return
+	_sync_elapsed = 0.0
+	var peer_id := multiplayer.get_unique_id()
+	var state := {"position": _local_player.global_position, "yaw": _local_player.rotation.y, "pitch": float(_local_player.get("pitch"))}
+	_player_states[peer_id] = state
+	if multiplayer.multiplayer_peer == null or multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	if multiplayer.is_server():
+		_broadcast_player_state(peer_id, state)
+	else:
+		_rpc_sync_player.rpc_id(1, peer_id, state.position, state.yaw, state.pitch)
+
+func _register_with_host() -> void:
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		var p := multiplayer.get_unique_id()
+		_rpc_register_player.rpc_id(1, p, _local_player.global_position, _local_player.rotation.y, float(_local_player.get("pitch")))
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_register_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	if not multiplayer.is_server() or multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
+		return
+	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	_player_states[peer_id] = state
+	for existing_id in _player_states.keys():
+		var existing_state: Dictionary = _player_states[existing_id]
+		if int(existing_id) != peer_id:
+			_rpc_add_remote_player.rpc_id(peer_id, int(existing_id), existing_state.position, float(existing_state.yaw), float(existing_state.pitch))
+	_add_remote_player(peer_id, position, yaw, pitch)
+	_rpc_add_remote_player.rpc(peer_id, position, yaw, pitch)
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	_add_remote_player(peer_id, position, yaw, pitch)
+
+func _add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	if peer_id == multiplayer.get_unique_id():
+		return
+	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	_player_states[peer_id] = state
+	var avatar := _remote_players.get(peer_id) as Node3D
+	if not is_instance_valid(avatar):
+		avatar = Node3D.new()
+		avatar.name = "RemotePlayer_%d" % peer_id
+		var mesh_instance := MeshInstance3D.new()
+		var mesh := CapsuleMesh.new()
+		mesh.radius = 0.38
+		mesh.height = 1.8
+		mesh_instance.mesh = mesh
+		var material := StandardMaterial3D.new()
+		material.albedo_color = REMOTE_PLAYER_COLOR
+		material.roughness = 0.7
+		mesh_instance.material_override = material
+		mesh_instance.position.y = 0.9
+		avatar.add_child(mesh_instance)
+		add_child(avatar)
+		_remote_players[peer_id] = avatar
+	avatar.global_position = position
+	avatar.rotation.y = yaw
+
+@rpc("any_peer", "call_remote", "unreliable")
+func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	if multiplayer.is_server():
+		if multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
+			return
+		var state := {"position": position, "yaw": yaw, "pitch": pitch}
+		_player_states[peer_id] = state
+		_apply_remote_position(peer_id, position, yaw, pitch)
+		_broadcast_player_state(peer_id, state)
+	else:
+		_apply_remote_position(peer_id, position, yaw, pitch)
+
+func _broadcast_player_state(peer_id: int, state: Dictionary) -> void:
+	_apply_remote_position(peer_id, state.position, float(state.yaw), float(state.pitch))
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		_rpc_sync_player.rpc(peer_id, state.position, float(state.yaw), float(state.pitch))
+
+func _apply_remote_position(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
+	_player_states[peer_id] = {"position": position, "yaw": yaw, "pitch": pitch}
+	var avatar := _remote_players.get(peer_id) as Node3D
+	if is_instance_valid(avatar):
+		avatar.global_position = position
+		avatar.rotation.y = yaw
+
+func _request_door_toggle(door: Node3D) -> void:
+	if not is_instance_valid(door):
+		return
+	var next_open := not bool(door.get_meta("open", false))
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		if multiplayer.is_server():
+			_apply_door_state(door.name, next_open)
+			_rpc_set_door_state.rpc(door.name, next_open)
+		else:
+			_rpc_request_door_toggle.rpc_id(1, door.name, next_open)
+	else:
+		_apply_door_state(door.name, next_open)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_door_toggle(door_name: String, next_open: bool) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 1 or not _player_states.has(sender):
+		return
+	var door := get_node_or_null(door_name) as Node3D
+	if door == null or not door.has_meta("is_door"):
+		return
+	var player_position: Vector3 = _player_states[sender].position
+	var doorway_center: Vector3 = door.get_meta("doorway_center", door.global_position)
+	if player_position.distance_to(doorway_center) > 4.0:
+		return
+	_apply_door_state(door_name, next_open)
+	_rpc_set_door_state.rpc(door_name, next_open)
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_set_door_state(door_name: String, is_open: bool) -> void:
+	_apply_door_state(door_name, is_open)
+
+func _apply_door_state(door_name: String, is_open: bool) -> void:
+	var door := get_node_or_null(door_name) as Node3D
+	if door == null or not door.has_meta("is_door"):
+		return
+	var closed_yaw := float(door.get_meta("closed_yaw", door.rotation.y))
+	var target_rotation := door.rotation
+	target_rotation.y = closed_yaw + (PI / 2.0 if is_open else 0.0)
+	door.rotation = target_rotation
+	door.set_meta("open", is_open)
+	door.set_meta("current_yaw", target_rotation.y)
+	if is_instance_valid(_local_player):
+		_local_player.call("_update_door_prompt")
+
 func _ready() -> void:
 	_build_environment()
 	_build_map()
@@ -10,7 +153,11 @@ func _ready() -> void:
 	player.set_script(load(PLAYER_SCENE_SCRIPT))
 	player.position = Vector3(0, 0.1, 0)
 	add_child(player)
+	_local_player = player
+	_player_states[multiplayer.get_unique_id()] = {"position": player.position, "yaw": player.rotation.y, "pitch": 0.0}
 	_build_hud()
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not multiplayer.is_server():
+		call_deferred("_register_with_host")
 
 func _build_environment() -> void:
 	var environment := WorldEnvironment.new()

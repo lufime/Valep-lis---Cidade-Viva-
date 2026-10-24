@@ -61,6 +61,7 @@ func _run_tests() -> void:
 	await _test_keyboard_movement(player)
 	await _test_mouse_look_and_capture(player)
 	await _test_main_menu()
+	await _test_multiplayer_replication_helpers(scene)
 	await _test_multiplayer_connection()
 	await _test_start_expedition_button()
 	_finish()
@@ -426,3 +427,21 @@ func _finish() -> void:
 	else:
 		push_error(summary + " RESULTADO=FAIL")
 		quit(1)
+
+func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
+	var door := scene.get_node_or_null("DoorToNorth") as Node3D
+	_check(door != null, "A porta existe para validar o estado sincronizável")
+	if door == null:
+		return
+	scene.call("_add_remote_player", 42, Vector3(2, 0.1, 3), 0.5, 0.0)
+	var avatar := scene.get_node_or_null("RemotePlayer_42") as Node3D
+	_check(avatar != null, "Um jogador remoto cria uma representação visual")
+	if avatar != null:
+		scene.call("_apply_remote_position", 42, Vector3(4, 0.1, 5), 1.0, 0.2)
+		_check(avatar.global_position.distance_to(Vector3(4, 0.1, 5)) < 0.001, "A posição recebida atualiza o avatar remoto")
+		_check(absf(avatar.rotation.y - 1.0) < 0.001, "A orientação recebida atualiza o avatar remoto")
+	scene.call("_apply_door_state", "DoorToNorth", true)
+	_check(bool(door.get_meta("open", false)), "O estado remoto abre a porta no cenário")
+	_check(absf(wrapf(door.rotation.y - float(door.get_meta("closed_yaw")), -PI, PI)) > 0.1, "A porta replica a rotação aberta")
+	scene.call("_apply_door_state", "DoorToNorth", false)
+	_check(not bool(door.get_meta("open", true)), "O estado remoto fecha a porta no cenário")
