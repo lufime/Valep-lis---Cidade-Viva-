@@ -13,6 +13,7 @@ var _remote_animation_players: Dictionary = {}
 var _remote_animation_names: Dictionary = {}
 var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
+var _last_server_sync_msec: Dictionary = {}
 var _sync_elapsed := 0.0
 
 func _process(delta: float) -> void:
@@ -52,14 +53,16 @@ func _register_with_host() -> void:
 func _rpc_register_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
 	if not multiplayer.is_server() or multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
 		return
-	var state := {"position": position, "yaw": yaw, "pitch": pitch}
+	var spawn_position := Vector3(0, 0.1, 0)
+	var state := {"position": spawn_position, "yaw": 0.0, "pitch": 0.0}
 	_player_states[peer_id] = state
+	_last_server_sync_msec[peer_id] = Time.get_ticks_msec()
 	for existing_id in _player_states.keys():
 		var existing_state: Dictionary = _player_states[existing_id]
 		if int(existing_id) != peer_id:
 			_rpc_add_remote_player.rpc_id(peer_id, int(existing_id), existing_state.position, float(existing_state.yaw), float(existing_state.pitch))
-	_add_remote_player(peer_id, position, yaw, pitch)
-	_rpc_add_remote_player.rpc(peer_id, position, yaw, pitch)
+	_add_remote_player(peer_id, spawn_position, 0.0, 0.0)
+	_rpc_add_remote_player.rpc(peer_id, spawn_position, 0.0, 0.0)
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
@@ -314,6 +317,17 @@ func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float)
 	if multiplayer.is_server():
 		if multiplayer.get_remote_sender_id() != peer_id or peer_id == 1:
 			return
+		if not _player_states.has(peer_id):
+			return
+		var previous_state: Dictionary = _player_states[peer_id]
+		var now_msec := Time.get_ticks_msec()
+		var last_msec := int(_last_server_sync_msec.get(peer_id, now_msec))
+		var elapsed_seconds := float(now_msec - last_msec) / 1000.0
+		if not _is_client_movement_valid(previous_state.position, position, elapsed_seconds):
+			return
+		if not is_finite(yaw) or not is_finite(pitch) or absf(pitch) > 1.5:
+			return
+		_last_server_sync_msec[peer_id] = now_msec
 		var state := {"position": position, "yaw": yaw, "pitch": pitch}
 		_player_states[peer_id] = state
 		_apply_remote_position(peer_id, position, yaw, pitch)
@@ -422,6 +436,17 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_remote_players.erase(peer_id)
 	_remote_targets.erase(peer_id)
 	_player_states.erase(peer_id)
+	_last_server_sync_msec.erase(peer_id)
+
+func _is_client_movement_valid(previous_position: Vector3, new_position: Vector3, elapsed_seconds: float) -> bool:
+	if not is_finite(new_position.x) or not is_finite(new_position.y) or not is_finite(new_position.z):
+		return false
+	if not is_finite(elapsed_seconds) or elapsed_seconds < 0.0:
+		return false
+	# Allow brief network jitter, but reject single-packet teleportation.
+	var bounded_elapsed := clampf(elapsed_seconds, 0.05, 0.35)
+	var maximum_distance := 4.2 * bounded_elapsed + 0.35
+	return previous_position.distance_to(new_position) <= maximum_distance
 
 func _build_environment() -> void:
 	var environment := WorldEnvironment.new()
