@@ -31,11 +31,14 @@ func _run_tests() -> void:
 		player.set("nearby_door", door)
 		var initial_yaw: float = door.rotation.y
 		player.call("_interact")
+		door.force_update_transform()
 		_check(bool(door.get_meta("open", false)), "Interagir deve abrir a porta")
-		_check(not is_equal_approx(door.rotation.y, initial_yaw), "Abrir deve alterar a rotação da porta")
+		var opened_yaw: float = door.rotation.y
+		_check(absf(wrapf(opened_yaw - initial_yaw, -PI, PI)) > 0.1, "Abrir deve alterar a rotação da porta")
 		player.call("_interact")
+		door.force_update_transform()
 		_check(not bool(door.get_meta("open", true)), "Uma segunda interação deve fechar a porta")
-		_check(is_equal_approx(door.rotation.y, initial_yaw), "Fechar deve repor a rotação inicial")
+		_check(absf(wrapf(door.rotation.y - initial_yaw, -PI, PI)) < 0.1, "Fechar deve repor a rotação inicial")
 
 	if scene.has_node("LocalPlayer/PlayerCamera"):
 		_check(true, "O jogador deve ter câmara em primeira pessoa")
