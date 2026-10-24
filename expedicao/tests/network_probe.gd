@@ -134,11 +134,14 @@ func _on_connected_to_server() -> void:
 
 func _move_player_gradually(player: CharacterBody3D, target: Vector3) -> void:
 	# Respeita o limite de deslocação validado pelo anfitrião em cada pacote de rede.
-	while player.global_position.distance_to(target) > 0.02:
-		var offset := target - player.global_position
-		player.global_position += offset.normalized() * minf(0.15, offset.length())
+	# A física mantém a altura do CharacterBody3D no chão; só interpolamos X/Z.
+	var horizontal_delta := Vector2(target.x - player.global_position.x, target.z - player.global_position.z)
+	while horizontal_delta.length() > 0.02:
+		var step_distance := minf(0.15, horizontal_delta.length())
+		var horizontal_step := Vector3(horizontal_delta.x, 0.0, horizontal_delta.y).normalized() * step_distance
+		player.global_position += horizontal_step
 		await create_timer(0.05).timeout
-	player.global_position = target
+		horizontal_delta = Vector2(target.x - player.global_position.x, target.z - player.global_position.z)
 	await create_timer(0.1).timeout
 
 func _watch_server_replication() -> void:
