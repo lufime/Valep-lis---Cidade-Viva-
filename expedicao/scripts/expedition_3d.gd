@@ -395,6 +395,7 @@ func _apply_door_state(door_name: String, is_open: bool) -> void:
 			_local_player.call("_update_door_prompt")
 
 func _ready() -> void:
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	_build_environment()
 	_build_map()
 	var player := CharacterBody3D.new()
@@ -407,6 +408,20 @@ func _ready() -> void:
 	_build_hud()
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and not multiplayer.is_server():
 		call_deferred("_register_with_host")
+
+func _on_peer_disconnected(peer_id: int) -> void:
+	# Remove all transient state for a player who left; do not leave a ghost avatar.
+	var avatar := _remote_players.get(peer_id) as Node3D
+	if is_instance_valid(avatar):
+		var avatar_key := avatar.get_instance_id()
+		_remote_skeletons.erase(avatar_key)
+		_remote_animation_players.erase(avatar_key)
+		_remote_animation_names.erase(avatar_key)
+		_remote_anim_time.erase(peer_id)
+		avatar.queue_free()
+	_remote_players.erase(peer_id)
+	_remote_targets.erase(peer_id)
+	_player_states.erase(peer_id)
 
 func _build_environment() -> void:
 	var environment := WorldEnvironment.new()
