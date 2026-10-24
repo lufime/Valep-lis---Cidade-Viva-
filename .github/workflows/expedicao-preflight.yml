@@ -92,6 +92,21 @@ jobs:
             --audio-driver Dummy --path expedicao --script res://tests/capture_visual.gd
           test -s /tmp/expedition-showcase.png
 
+      - name: Testar captura e libertação do rato em ambiente gráfico
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xvfb-run
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          test_log="/tmp/mouse-capture-gui.log"
+          timeout --signal=TERM --kill-after=2s 30s env LIBGL_ALWAYS_SOFTWARE=1 \
+            xvfb-run -a "$godot_bin" --audio-driver Dummy --path expedicao \
+            --script res://tests/test_mouse_capture_gui.gd 2>&1 | tee "$test_log"
+          grep -q "GUI_MOUSE_CAPTURE_PASS" "$test_log"
+          grep -q "GUI_MOUSE_ESCAPE_RELEASE_PASS" "$test_log"
+          grep -q "GUI_MOUSE_CLICK_CAPTURE_PASS" "$test_log"
+          grep -q "GUI_INPUT_PASS=3 GUI_INPUT_FAIL=0 RESULTADO=PASS" "$test_log"
+
       - name: Publicar captura da cena 3D
         uses: actions/upload-artifact@v4
         with:

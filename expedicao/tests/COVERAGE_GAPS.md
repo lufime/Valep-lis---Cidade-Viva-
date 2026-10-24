@@ -12,10 +12,11 @@ Este documento descreve apenas a base isolada `expedicao/` e não declara o jogo
 - Criação e desligação de uma sala ENet local.
 - Teste de integração com processos Godot separados: ligação, PING/PONG, posição e orientação do anfitrião replicadas para o cliente, posição do cliente recebida pelo anfitrião, criação do avatar remoto, rejeição de pedido de porta por cliente distante, pedido válido de abertura e fecho, e confirmação dos dois estados nos processos anfitrião e cliente.
 - Preparação do modelo humanoide com clips CC0 e verificações de importação e seleção de animações idle/walk/locomoção rápida.
+- Teste gráfico separado sob Xvfb para as transições de captura inicial do rato, ESC para libertar e clique esquerdo para recapturar; este teste usa eventos sintéticos, não um dispositivo físico.
 
 ## Testes que continuam ignorados ou exigem ambiente gráfico
 
-- Captura/libertação real do rato, ESC e clique esquerdo: o runner headless não valida o comportamento de dispositivo/estado gráfico.
+- Captura/libertação real com rato físico: o teste gráfico valida os caminhos de código com eventos sintéticos sob Xvfb, mas não substitui a verificação manual de um rato num dispositivo real.
 - Aspeto visual real, deformação do esqueleto e qualidade do crossfade: a suite headless confirma clips e transições lógicas, não a qualidade renderizada em ecrã.
 
 ## Lacunas explícitas — não contar como PASS
