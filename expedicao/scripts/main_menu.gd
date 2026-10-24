@@ -9,6 +9,7 @@ var players_label: Label
 var host_button: Button
 var join_button: Button
 var disconnect_button: Button
+var start_expedition_button: Button
 
 func _ready() -> void:
 	_build_interface()
@@ -50,6 +51,11 @@ func _build_interface() -> void:
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	layout.add_child(subtitle)
 
+	start_expedition_button = Button.new()
+	start_expedition_button.text = "INICIAR EXPEDIÇÃO 3D (TESTE)"
+	start_expedition_button.pressed.connect(_start_expedition)
+	layout.add_child(start_expedition_button)
+
 	address_input = LineEdit.new()
 	address_input.placeholder_text = "Endereço IP do anfitrião"
 	address_input.text = "127.0.0.1"
@@ -82,10 +88,13 @@ func _build_interface() -> void:
 	layout.add_child(players_label)
 
 	var note := Label.new()
-	note.text = "Protótipo técnico. Para jogar pela Internet será necessário um anfitrião acessível e a porta UDP configurada. Esta base ainda não contém o mapa nem as mecânicas completas."
+	note.text = "A expedição 3D é um protótipo local. O multijogador ainda não sincroniza o cenário ou as ações de jogo. Para Internet é necessário anfitrião acessível e porta UDP configurada."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", Color("#c1c8d2"))
 	layout.add_child(note)
+
+func _start_expedition() -> void:
+	get_tree().change_scene_to_file("res://scenes/expedition_3d.tscn")
 
 func _host_game() -> void:
 	_disconnect_game()
