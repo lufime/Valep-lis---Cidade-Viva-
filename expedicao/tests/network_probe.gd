@@ -151,8 +151,15 @@ func _watch_server_replication() -> void:
 					if is_instance_valid(test_door) and bool(test_door.get_meta("open", false)):
 						print("SERVER_DOOR_REPLICATION_PASS | O anfitrião recebeu e aplicou a abertura pedida pelo cliente")
 						probe.rpc_id(int(peer_id), "replication_ack")
-						await create_timer(0.5).timeout
-						quit(0)
+						for close_attempt in range(40):
+							await create_timer(0.1).timeout
+							if is_instance_valid(test_door) and not bool(test_door.get_meta("open", true)):
+								print("SERVER_DOOR_CLOSE_REPLICATION_PASS | O anfitrião aplicou o pedido de fecho do cliente")
+								probe.rpc_id(int(peer_id), "close_replication_ack")
+								await create_timer(0.5).timeout
+								quit(0)
+								return
+						_fail("O anfitrião não recebeu nem aplicou o pedido de fecho da porta do cliente.")
 						return
 				_fail("O anfitrião não recebeu a abertura da porta pedida pelo cliente.")
 				return

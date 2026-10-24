@@ -23,4 +23,16 @@ func replication_ack() -> void:
 		get_tree().quit(1)
 		return
 	print("CLIENT_DOOR_REPLICATION_PASS | O cliente recebeu o estado aberto da porta")
+	scene.call("_request_door_toggle", door)
+	print("CLIENT_DOOR_CLOSE_REQUESTED | O cliente pediu o fecho da porta norte")
+
+@rpc("authority", "call_remote", "reliable")
+func close_replication_ack() -> void:
+	var scene := get_tree().root.get_node_or_null("Expedition3D") as Node3D
+	var door := scene.get_node_or_null("DoorToNorth") as Node3D if scene != null else null
+	if door == null or bool(door.get_meta("open", true)):
+		push_error("CLIENT_DOOR_CLOSE_REPLICATION_FAIL | O cliente não recebeu o estado fechado da porta.")
+		get_tree().quit(1)
+		return
+	print("CLIENT_DOOR_CLOSE_REPLICATION_PASS | O cliente recebeu o estado fechado da porta")
 	get_tree().quit(0)
