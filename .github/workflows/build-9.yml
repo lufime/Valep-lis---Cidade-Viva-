@@ -20,6 +20,9 @@ env:
 
 jobs:
   preflight-android:
+    # Este workflow pertence ao projeto antigo V0.1.126; a branch isolada usa expedicao-preflight.yml.
+    # Não executar aqui, pois não contém scripts/expedition.gd nem os recursos do projeto antigo.
+    if: github.ref_name != 'rebuild/a-ultima-expedicao-zero' && github.head_ref != 'rebuild/a-ultima-expedicao-zero'
     name: Auditar, importar, testar e exportar APK
     runs-on: ubuntu-24.04
     timeout-minutes: 40

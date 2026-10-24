@@ -19,6 +19,9 @@ func _run_tests() -> void:
 	await process_frame
 	await physics_frame
 
+	_test_environment_lighting(scene)
+	_test_hud_status(scene)
+
 	var player := scene.get_node_or_null("LocalPlayer") as CharacterBody3D
 	_check(player != null, "A cena deve criar o jogador local")
 	_check(scene.get_node_or_null("CentralFloor") != null, "A cena deve criar a sala central")
@@ -60,6 +63,7 @@ func _run_tests() -> void:
 	await _test_outer_wall_collisions(player)
 	await _test_keyboard_movement(player)
 	await _test_mouse_look_and_capture(player)
+	await _test_animation_asset()
 	await _test_main_menu()
 	await _test_multiplayer_replication_helpers(scene)
 	await _test_multiplayer_connection()
@@ -187,6 +191,55 @@ func _test_mouse_look_and_capture(player: CharacterBody3D) -> void:
 
 	_skip("Captura/libertação do rato por eventos reais", "O runner Godot headless não fornece um dispositivo de rato capturável; este comportamento requer teste gráfico.")
 	_skip("ESC e clique esquerdo para alternar captura do rato", "O estado Input.mouse_mode não é verificável de forma fiável neste runner headless.")
+
+func _test_animation_asset() -> void:
+	# O PRE-FLIGHT gera este GLB a partir da biblioteca CC0; localmente pode não existir.
+	if not ResourceLoader.exists("res://assets/character_animated.glb"):
+		_skip("Clips humanoides CC0", "O GLB animado é criado pelo passo de preparação do PRE-FLIGHT.")
+		return
+	var packed := load("res://assets/character_animated.glb") as PackedScene
+	_check(packed != null, "O modelo humanoide com animações deve importar como PackedScene")
+	if packed == null:
+		return
+	var model := packed.instantiate()
+	root.add_child(model)
+	await process_frame
+	var animation_player := _find_animation_player_for_test(model)
+	_check(animation_player != null, "O GLB combinado deve expor um AnimationPlayer")
+	if animation_player != null:
+		var names := animation_player.get_animation_list()
+		_check(names.size() > 0, "O modelo combinado deve conter clips de animação")
+		var has_walk := false
+		var has_idle := false
+		for animation_name in names:
+			var normalized := String(animation_name).to_lower()
+			has_walk = has_walk or normalized.contains("walk")
+			has_idle = has_idle or normalized.contains("idle")
+		var has_run := false
+		print("ANIMATION_CLIPS | ", ", ".join(PackedStringArray(names)))
+		for animation_name in names:
+			var normalized_name := String(animation_name).to_lower()
+			has_run = has_run or normalized_name.contains("run") or normalized_name.contains("jog") or normalized_name.contains("sprint") or normalized_name.contains("fast")
+		_check(has_walk, "O GLB deve conter uma animação de caminhada")
+		_check(has_idle, "O GLB deve conter uma animação de repouso")
+		_check(has_run, "O GLB deve conter uma animação de corrida")
+		if has_walk:
+			for animation_name in names:
+				if String(animation_name).to_lower().contains("walk"):
+					animation_player.play(String(animation_name))
+					break
+		_check(animation_player.is_playing(), "A animação de caminhada deve poder ser iniciada")
+	model.queue_free()
+	await process_frame
+
+func _find_animation_player_for_test(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node as AnimationPlayer
+	for child in node.get_children():
+		var found := _find_animation_player_for_test(child)
+		if found != null:
+			return found
+	return null
 
 func _test_main_menu() -> void:
 	var menu_scene := load("res://scenes/main.tscn") as PackedScene
@@ -437,11 +490,56 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	var avatar := scene.get_node_or_null("RemotePlayer_42") as Node3D
 	_check(avatar != null, "Um jogador remoto cria uma representação visual")
 	if avatar != null:
+		var character_model := avatar.get_node_or_null("CharacterModel") as Node3D
+		_check(character_model != null, "O avatar remoto carrega o modelo humanoide GLB")
+		if character_model != null:
+			var mesh_count := 0
+			var skeleton_count := 0
+			var stack: Array[Node] = [character_model]
+			while not stack.is_empty():
+				var current: Node = stack.pop_back()
+				if current is MeshInstance3D:
+					mesh_count += 1
+				if current is Skeleton3D:
+					skeleton_count += 1
+					_check((current as Skeleton3D).get_bone_count() >= 60, "O modelo humanoide inclui esqueleto articulado")
+				for child in current.get_children():
+					stack.append(child)
+			_check(mesh_count >= 3, "O modelo humanoide contém malhas 3D importadas")
+			_check(skeleton_count >= 1, "O modelo humanoide contém um esqueleto")
+		var animation_players := scene.get("_remote_animation_players") as Dictionary
+		var animation_names := scene.get("_remote_animation_names") as Dictionary
+		var animation_player := animation_players.get(avatar.get_instance_id()) as AnimationPlayer
+		if animation_player != null:
+			var locomotion_names: Dictionary = animation_names.get(avatar.get_instance_id(), {})
+			var selected_idle := String(locomotion_names.get("idle", ""))
+			_check(selected_idle.to_lower() == "idle", "O avatar remoto prefere o clip Idle de pé em vez de Crouch_Idle")
+			for movement_type in ["idle", "walk", "run"]:
+				var clip_name := String(locomotion_names.get(movement_type, ""))
+				if not clip_name.is_empty():
+					var clip := animation_player.get_animation(clip_name)
+					_check(clip != null and clip.loop_mode == Animation.LOOP_LINEAR, "O clip " + clip_name + " repete continuamente")
+			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 0.0)
+			_check(animation_player.current_animation.to_lower().contains("idle"), "O avatar remoto usa repouso quando está parado")
+			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 1.5)
+			_check(animation_player.current_animation.to_lower().contains("walk"), "O avatar remoto muda para caminhada em movimento normal")
+			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 5.0)
+			_check((animation_player.current_animation.to_lower().contains("run") or animation_player.current_animation.to_lower().contains("jog") or animation_player.current_animation.to_lower().contains("sprint") or animation_player.current_animation.to_lower().contains("fast")), "O avatar remoto muda para corrida quando se desloca depressa")
+			_check(animation_player.is_playing(), "A animação de corrida permanece ativa após a transição")
+			_check(animation_names.has(avatar.get_instance_id()), "O estado de animação é guardado por avatar remoto")
 		var initial_position := avatar.global_position
 		scene.call("_apply_remote_position", 42, Vector3(4, 0.1, 5), 1.0, 0.2)
 		_check((scene.get("_remote_targets") as Dictionary).has(42), "A posição recebida fica definida como destino de movimento")
 		scene.call("_process", 0.05)
 		_check(avatar.global_position.distance_to(initial_position) > 0.1 and avatar.global_position.distance_to(Vector3(4, 0.1, 5)) > 0.1, "O avatar remoto aproxima-se do destino sem saltar diretamente")
+		var remote_skeletons := scene.get("_remote_skeletons") as Dictionary
+		var animated_skeleton := remote_skeletons.get(avatar.get_instance_id()) as Skeleton3D
+		_check(animated_skeleton != null, "O avatar remoto tem esqueleto associado ao sistema de animação")
+		if animated_skeleton != null:
+			var thigh_index := animated_skeleton.find_bone("thigh_l")
+			_check(thigh_index >= 0, "O esqueleto tem o osso da perna esquerda")
+			if thigh_index >= 0:
+				_check(absf(animated_skeleton.get_bone_pose_rotation(thigh_index).angle_to(Quaternion.IDENTITY)) > 0.001, "O ciclo de caminhada altera a pose da perna")
 		scene.call("_process", 1.0)
 		_check(avatar.global_position.distance_to(Vector3(4, 0.1, 5)) < 0.001, "O avatar remoto converge para a posição recebida")
 		_check(absf(avatar.rotation.y - 1.0) < 0.001, "A orientação recebida é interpolada até ao destino")
@@ -454,3 +552,29 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 	_check(bool(door.get_meta("open", false)), "O anfitrião alterna a porta a partir do estado autoritativo")
 	scene.call("_toggle_door_authoritatively", "DoorToNorth")
 	_check(not bool(door.get_meta("open", true)), "O anfitrião fecha a porta sem confiar no estado pedido pelo cliente")
+
+func _test_environment_lighting(scene: Node3D) -> void:
+	var environment: WorldEnvironment
+	var key_light: DirectionalLight3D
+	for child in scene.get_children():
+		if child is WorldEnvironment:
+			environment = child as WorldEnvironment
+		elif child is DirectionalLight3D:
+			key_light = child as DirectionalLight3D
+	_check(environment != null and environment.environment != null, "O cenário deve ter um ambiente de renderização configurado")
+	_check(key_light != null and key_light.shadow_enabled, "A luz principal deve projetar sombras para dar profundidade ao cenário")
+	_check(key_light != null and key_light.shadow_opacity < 1.0 and key_light.shadow_blur >= 1.0, "As sombras devem ser suavizadas para evitar contraste excessivamente duro")
+	if key_light != null:
+		_check(key_light.light_energy >= 0.6, "A luz principal deve ter intensidade suficiente para revelar os materiais")
+
+func _test_hud_status(scene: Node3D) -> void:
+	var labels := scene.find_children("*", "Label", true, false)
+	var status_note: Label
+	for item in labels:
+		var label := item as Label
+		if label != null and label.text.contains("IA da criatura ainda não implementada"):
+			status_note = label
+			break
+	_check(status_note != null, "O HUD deve declarar explicitamente que a IA da criatura ainda não está implementada")
+	if status_note != null:
+		_check(status_note.text.contains("Rede técnica") and status_note.text.contains("em validação"), "O HUD deve distinguir a rede técnica em validação da IA ainda não implementada")

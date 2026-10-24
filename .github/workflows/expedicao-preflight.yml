@@ -8,13 +8,14 @@ on:
     paths:
       - "expedicao/**"
       - ".github/workflows/expedicao-preflight.yml"
+      - ".github/workflows/build-9.yml"
 
 permissions:
   contents: read
 
 concurrency:
   group: ultima-expedicao-preflight-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   godot-smoke-test:
@@ -35,6 +36,30 @@ jobs:
           unzip -q /tmp/godot.zip -d /tmp/godot
           chmod +x /tmp/godot/Godot_v4.5-stable_linux.x86_64
           echo "/tmp/godot" >> "$GITHUB_PATH"
+
+      - name: Obter animações humanoides CC0 e combiná-las com o modelo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p expedicao/assets
+          curl -fL --retry 3 \
+            "https://raw.githubusercontent.com/DyingStar-game/DyingStar/509148dc81a54061ec1422dbe78d03af4ac8648b/assets/Universal%20Animation%20Library/Unreal-Godot/UAL1_Standard.glb" \
+            -o /tmp/UAL1_Standard.glb
+          test -s /tmp/UAL1_Standard.glb
+          npm install --no-audit --no-fund --prefix expedicao/tools @gltf-transform/core @gltf-transform/extensions
+          node expedicao/tools/merge_animations.mjs \
+            expedicao/assets/character.glb \
+            expedicao/assets/character_animated.glb \
+            /tmp/UAL1_Standard.glb
+          test -s expedicao/assets/character_animated.glb
+          test "$(stat -c %s expedicao/assets/character_animated.glb)" -gt 1000000
+
+      - name: Importar modelo com animações para Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.5-stable_linux.x86_64 --headless --path expedicao --editor --quit
+          test -s expedicao/assets/character_animated.glb.import
 
       - name: Verificar importação e análise do projeto
         shell: bash
@@ -57,6 +82,38 @@ jobs:
           set -euo pipefail
           /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
             --headless --path expedicao res://scenes/expedition_3d.tscn --quit-after 5
+
+      - name: Capturar imagem da cena 3D com rendering por software
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xvfb-run
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a /tmp/godot/Godot_v4.5-stable_linux.x86_64 \
+            --audio-driver Dummy --path expedicao --script res://tests/capture_visual.gd
+          test -s /tmp/expedition-showcase.png
+
+      - name: Testar captura e libertação do rato em ambiente gráfico
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xvfb-run
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          test_log="/tmp/mouse-capture-gui.log"
+          timeout --signal=TERM --kill-after=2s 30s env LIBGL_ALWAYS_SOFTWARE=1 \
+            xvfb-run -a "$godot_bin" --audio-driver Dummy --path expedicao \
+            --script res://tests/test_mouse_capture_gui.gd 2>&1 | tee "$test_log"
+          grep -q "GUI_MOUSE_CAPTURE_PASS" "$test_log"
+          grep -q "GUI_MOUSE_ESCAPE_RELEASE_PASS" "$test_log"
+          grep -q "GUI_MOUSE_CLICK_CAPTURE_PASS" "$test_log"
+          grep -q "GUI_INPUT_PASS=3 GUI_INPUT_FAIL=0 RESULTADO=PASS" "$test_log"
+
+      - name: Publicar captura da cena 3D
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-ultima-expedicao-captura-grafica
+          path: /tmp/expedition-showcase.png
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Testes funcionais da cena 3D e das portas
         shell: bash
@@ -116,5 +173,22 @@ jobs:
           grep -q "CLIENT_PASS" "$client_log"
           grep -q "SERVER_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_REPLICATION_PASS" "$client_log"
+          grep -q "CLIENT_REMOTE_PLAYER_PASS" "$client_log"
+          grep -q "CLIENT_REMOTE_ORIENTATION_PASS" "$client_log"
+          grep -q "CLIENT_DOOR_DISTANCE_GUARD_PASS" "$client_log"
           grep -q "SERVER_DOOR_REPLICATION_PASS" "$server_log"
           grep -q "CLIENT_DOOR_REPLICATION_PASS" "$client_log"
+          grep -q "SERVER_DOOR_CLOSE_REPLICATION_PASS" "$server_log"
+          grep -q "CLIENT_DOOR_CLOSE_REPLICATION_PASS" "$client_log"
+
+      - name: Repetir testes funcionais em ciclo de estabilidade
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot_bin="/tmp/godot/Godot_v4.5-stable_linux.x86_64"
+          for iteration in 1 2 3; do
+            echo "STABILITY_LOOP_START | round=$iteration/3"
+            timeout --signal=TERM --kill-after=5s 60s \
+              "$godot_bin" --headless --path expedicao --script res://tests/test_expedition_3d.gd
+            echo "STABILITY_LOOP_PASS | round=$iteration/3"
+          done

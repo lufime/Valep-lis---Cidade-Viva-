@@ -8,6 +8,10 @@ const PLAYER_SYNC_INTERVAL := 0.05
 var _local_player: CharacterBody3D
 var _remote_players: Dictionary = {}
 var _remote_targets: Dictionary = {}
+var _remote_skeletons: Dictionary = {}
+var _remote_animation_players: Dictionary = {}
+var _remote_animation_names: Dictionary = {}
+var _remote_anim_time: Dictionary = {}
 var _player_states: Dictionary = {}
 var _sync_elapsed := 0.0
 
@@ -18,8 +22,11 @@ func _process(delta: float) -> void:
 		if not is_instance_valid(remote_avatar):
 			continue
 		var target: Dictionary = _remote_targets[remote_id]
+		var previous_position := remote_avatar.global_position
 		remote_avatar.global_position = remote_avatar.global_position.lerp(target.position, blend)
 		remote_avatar.rotation.y = lerp_angle(remote_avatar.rotation.y, float(target.yaw), blend)
+		var moved_distance := previous_position.distance_to(remote_avatar.global_position)
+		_animate_remote_avatar(int(remote_id), remote_avatar, delta, moved_distance / maxf(delta, 0.0001))
 	if not is_instance_valid(_local_player):
 		return
 	_sync_elapsed += delta
@@ -67,22 +74,240 @@ func _add_remote_player(peer_id: int, position: Vector3, yaw: float, pitch: floa
 	if not is_instance_valid(avatar):
 		avatar = Node3D.new()
 		avatar.name = "RemotePlayer_%d" % peer_id
-		var mesh_instance := MeshInstance3D.new()
-		var mesh := CapsuleMesh.new()
-		mesh.radius = 0.38
-		mesh.height = 1.8
-		mesh_instance.mesh = mesh
-		var material := StandardMaterial3D.new()
-		material.albedo_color = REMOTE_PLAYER_COLOR
-		material.roughness = 0.7
-		mesh_instance.material_override = material
-		mesh_instance.position.y = 0.9
-		avatar.add_child(mesh_instance)
+		_build_remote_avatar(avatar)
 		add_child(avatar)
 		_remote_players[peer_id] = avatar
 	avatar.global_position = position
 	avatar.rotation.y = yaw
 	_remote_targets[peer_id] = state
+
+func _build_remote_avatar(avatar: Node3D) -> void:
+	# Usa o modelo com animações CC0 quando foi gerado no PRE-FLIGHT.
+	# O modelo original continua disponível como fallback de importação.
+	var model_scene := load("res://assets/character_animated.glb") as PackedScene
+	if model_scene == null:
+		model_scene = load("res://assets/character.glb") as PackedScene
+	if model_scene != null:
+		var character := model_scene.instantiate() as Node3D
+		if character != null:
+			character.name = "CharacterModel"
+			character.scale = Vector3.ONE
+			avatar.add_child(character)
+			var skeleton := _find_skeleton(character)
+			if skeleton != null:
+				_remote_skeletons[avatar.get_instance_id()] = skeleton
+			var animation_player := _find_animation_player(character)
+			if animation_player != null:
+				var walk_name := _find_animation_name(animation_player, "walk")
+				var idle_name := _find_animation_name(animation_player, "idle")
+				var run_name := _find_animation_name(animation_player, "run")
+				if run_name.is_empty():
+					run_name = _find_animation_name(animation_player, "jog")
+				if run_name.is_empty():
+					run_name = _find_animation_name(animation_player, "sprint")
+				if run_name.is_empty():
+					run_name = _find_animation_name(animation_player, "fast")
+				# As animações de locomoção e repouso devem repetir continuamente.
+				# Alguns clips importados podem vir sem loop configurado no recurso.
+				for locomotion_name in [idle_name, walk_name, run_name]:
+					if not locomotion_name.is_empty():
+						var locomotion_animation := animation_player.get_animation(locomotion_name)
+						if locomotion_animation != null:
+							locomotion_animation.loop_mode = Animation.LOOP_LINEAR
+				if not walk_name.is_empty() or not idle_name.is_empty() or not run_name.is_empty():
+					_remote_animation_players[avatar.get_instance_id()] = animation_player
+					_remote_animation_names[avatar.get_instance_id()] = {"walk": walk_name, "idle": idle_name, "run": run_name, "current": ""}
+					if not idle_name.is_empty():
+						animation_player.play(idle_name)
+			return
+
+	_build_remote_avatar_fallback(avatar)
+
+func _find_animation_player(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node as AnimationPlayer
+	for child in node.get_children():
+		var found := _find_animation_player(child)
+		if found != null:
+			return found
+	return null
+
+func _find_animation_name(animation_player: AnimationPlayer, keyword: String) -> String:
+	var fallback_name := ""
+	for animation_name in animation_player.get_animation_list():
+		var normalized_name := String(animation_name).to_lower()
+		if normalized_name == keyword.to_lower():
+			return String(animation_name)
+		if fallback_name.is_empty() and normalized_name.contains(keyword.to_lower()):
+			# Do not select crouched/sitting/swimming clips as the generic idle pose.
+			if keyword.to_lower() != "idle" or (not normalized_name.contains("crouch") and not normalized_name.contains("sitting") and not normalized_name.contains("swim")):
+				fallback_name = String(animation_name)
+	return fallback_name
+
+func _find_skeleton(node: Node) -> Skeleton3D:
+	if node is Skeleton3D:
+		return node as Skeleton3D
+	for child in node.get_children():
+		var found := _find_skeleton(child)
+		if found != null:
+			return found
+	return null
+
+func _animate_remote_avatar(remote_id: int, avatar: Node3D, delta: float, movement_speed: float) -> void:
+	var avatar_key := avatar.get_instance_id()
+	var is_moving := movement_speed > 0.04
+	var animation_player := _remote_animation_players.get(avatar_key) as AnimationPlayer
+	if is_instance_valid(animation_player):
+		var names: Dictionary = _remote_animation_names.get(avatar_key, {})
+		var desired := String(names.get("idle", ""))
+		if is_moving:
+			var run_name := String(names.get("run", ""))
+			var walk_name := String(names.get("walk", ""))
+			desired = run_name if movement_speed >= 3.5 and not run_name.is_empty() else walk_name
+			if desired.is_empty():
+				desired = run_name
+		if desired.is_empty():
+			desired = String(names.get("walk", "")) if not is_moving else String(names.get("idle", ""))
+		if not desired.is_empty() and String(names.get("current", "")) != desired:
+			# Crossfade curto para evitar cortes bruscos entre repouso e locomoção.
+			animation_player.play(desired, 0.18)
+			names["current"] = desired
+			_remote_animation_names[avatar_key] = names
+		return
+	var skeleton := _remote_skeletons.get(avatar_key) as Skeleton3D
+	if not is_instance_valid(skeleton):
+		return
+	var elapsed := float(_remote_anim_time.get(remote_id, 0.0)) + delta
+	_remote_anim_time[remote_id] = elapsed
+	var phase := elapsed * (10.0 if is_moving else 2.2)
+	var swing := sin(phase) * (0.42 if is_moving else 0.025)
+	var knee := maxf(0.0, sin(phase + 0.65)) * (0.5 if is_moving else 0.008)
+	var arm_swing := -swing * 0.72
+	_set_bone_rotation(skeleton, "thigh_l", swing)
+	_set_bone_rotation(skeleton, "thigh_r", -swing)
+	_set_bone_rotation(skeleton, "calf_l", knee)
+	_set_bone_rotation(skeleton, "calf_r", maxf(0.0, sin(phase + PI + 0.65)) * (0.5 if is_moving else 0.008))
+	_set_bone_rotation(skeleton, "upperarm_l", arm_swing)
+	_set_bone_rotation(skeleton, "upperarm_r", -arm_swing)
+	_set_bone_rotation(skeleton, "lowerarm_l", -0.12 if is_moving else 0.0)
+	_set_bone_rotation(skeleton, "lowerarm_r", -0.12 if is_moving else 0.0)
+	_set_bone_rotation(skeleton, "spine_01", sin(elapsed * 2.2) * 0.025)
+
+func _set_bone_rotation(skeleton: Skeleton3D, bone_name: String, angle: float) -> void:
+	var bone_index := skeleton.find_bone(bone_name)
+	if bone_index < 0:
+		return
+	skeleton.set_bone_pose_rotation(bone_index, Quaternion(Vector3.RIGHT, angle))
+
+func _build_remote_avatar_fallback(avatar: Node3D) -> void:
+	# Modelo humanoide procedural de protótipo: cabeça, tronco, braços, pernas e botas.
+	# Mantém o avatar leve e sem dependências de assets externos.
+	var torso := CapsuleMesh.new()
+	torso.radius = 0.25
+	torso.height = 0.82
+	_make_remote_avatar_part(avatar, "Torso", torso, Vector3(0, 1.15, 0), REMOTE_PLAYER_COLOR)
+	
+	var head := SphereMesh.new()
+	head.radius = 0.19
+	head.height = 0.38
+	_make_remote_avatar_part(avatar, "Head", head, Vector3(0, 1.78, 0), Color("#d6a078"))
+	
+	var neck := CylinderMesh.new()
+	neck.top_radius = 0.105
+	neck.bottom_radius = 0.12
+	neck.height = 0.18
+	_make_remote_avatar_part(avatar, "Neck", neck, Vector3(0, 1.55, 0), Color("#bd8966"))
+	
+	var hair := SphereMesh.new()
+	hair.radius = 0.195
+	hair.height = 0.16
+	_make_remote_avatar_part(avatar, "Hair", hair, Vector3(0, 1.91, 0.015), Color("#30251f"))
+	
+	var left_eye := SphereMesh.new()
+	left_eye.radius = 0.027
+	left_eye.height = 0.04
+	_make_remote_avatar_part(avatar, "EyeLeft", left_eye, Vector3(-0.065, 1.80, -0.165), Color("#f5f2e9"))
+	var right_eye := SphereMesh.new()
+	right_eye.radius = 0.027
+	right_eye.height = 0.04
+	_make_remote_avatar_part(avatar, "EyeRight", right_eye, Vector3(0.065, 1.80, -0.165), Color("#f5f2e9"))
+	var nose := SphereMesh.new()
+	nose.radius = 0.035
+	nose.height = 0.065
+	_make_remote_avatar_part(avatar, "Nose", nose, Vector3(0, 1.755, -0.185), Color("#c28d69"))
+	
+	var vest := BoxMesh.new()
+	vest.size = Vector3(0.43, 0.48, 0.29)
+	_make_remote_avatar_part(avatar, "UtilityVest", vest, Vector3(0, 1.22, -0.015), Color("#d18a3e"))
+	var vest_panel := BoxMesh.new()
+	vest_panel.size = Vector3(0.32, 0.07, 0.025)
+	_make_remote_avatar_part(avatar, "VestReflectiveBand", vest_panel, Vector3(0, 1.17, -0.168), Color("#e8e5cc"))
+	var belt := BoxMesh.new()
+	belt.size = Vector3(0.43, 0.09, 0.27)
+	_make_remote_avatar_part(avatar, "UtilityBelt", belt, Vector3(0, 0.91, 0), Color("#222b34"))
+	
+	var left_arm := CapsuleMesh.new()
+	left_arm.radius = 0.095
+	left_arm.height = 0.68
+	_make_remote_avatar_part(avatar, "ArmLeft", left_arm, Vector3(-0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, -0.12))
+	
+	var right_arm := CapsuleMesh.new()
+	right_arm.radius = 0.095
+	right_arm.height = 0.68
+	_make_remote_avatar_part(avatar, "ArmRight", right_arm, Vector3(0.34, 1.16, 0), Color("#c7864d"), Vector3(0, 0, 0.12))
+	
+	var left_shoulder := SphereMesh.new()
+	left_shoulder.radius = 0.13
+	left_shoulder.height = 0.22
+	_make_remote_avatar_part(avatar, "ShoulderLeft", left_shoulder, Vector3(-0.31, 1.39, 0), Color("#d18a3e"))
+	var right_shoulder := SphereMesh.new()
+	right_shoulder.radius = 0.13
+	right_shoulder.height = 0.22
+	_make_remote_avatar_part(avatar, "ShoulderRight", right_shoulder, Vector3(0.31, 1.39, 0), Color("#d18a3e"))
+	
+	var left_hand := SphereMesh.new()
+	left_hand.radius = 0.085
+	left_hand.height = 0.13
+	_make_remote_avatar_part(avatar, "HandLeft", left_hand, Vector3(-0.37, 0.79, -0.01), Color("#c28d69"))
+	var right_hand := SphereMesh.new()
+	right_hand.radius = 0.085
+	right_hand.height = 0.13
+	_make_remote_avatar_part(avatar, "HandRight", right_hand, Vector3(0.37, 0.79, -0.01), Color("#c28d69"))
+	
+	var left_leg := CapsuleMesh.new()
+	left_leg.radius = 0.13
+	left_leg.height = 0.78
+	_make_remote_avatar_part(avatar, "LegLeft", left_leg, Vector3(-0.15, 0.48, 0), Color("#303d50"))
+	
+	var right_leg := CapsuleMesh.new()
+	right_leg.radius = 0.13
+	right_leg.height = 0.78
+	_make_remote_avatar_part(avatar, "LegRight", right_leg, Vector3(0.15, 0.48, 0), Color("#303d50"))
+	
+	var boot := BoxMesh.new()
+	boot.size = Vector3(0.23, 0.13, 0.34)
+	_make_remote_avatar_part(avatar, "BootLeft", boot, Vector3(-0.15, 0.09, -0.055), Color("#171c22"))
+	_make_remote_avatar_part(avatar, "BootRight", boot, Vector3(0.15, 0.09, -0.055), Color("#171c22"))
+	
+
+func _make_remote_avatar_part(
+	avatar: Node3D,
+	part_name: String,
+	mesh: Mesh,
+	part_position: Vector3,
+	color: Color,
+	part_rotation: Vector3 = Vector3.ZERO
+) -> void:
+	var part := MeshInstance3D.new()
+	part.name = part_name
+	part.mesh = mesh
+	part.position = part_position
+	part.rotation = part_rotation
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.72
+	part.material_override = material
+	avatar.add_child(part)
 
 @rpc("any_peer", "call_remote", "unreliable")
 func _rpc_sync_player(peer_id: int, position: Vector3, yaw: float, pitch: float) -> void:
@@ -195,22 +420,24 @@ func _build_environment() -> void:
 	sky_material.ground_horizon_color = Color("#20262d")
 	env.sky.sky_material = sky_material
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("#8ba0b8")
-	env.ambient_light_energy = 0.35
+	env.ambient_light_color = Color("#858585")
+	env.ambient_light_energy = 0.32
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.environment = env
 	add_child(environment)
 
 	var light := DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-38, -28, 0)
-	light.light_energy = 0.35
+	light.light_energy = 0.62
 	light.shadow_enabled = true
+	light.shadow_opacity = 0.55
+	light.shadow_blur = 1.0
 	add_child(light)
 
 	var fill := OmniLight3D.new()
 	fill.position = Vector3(0, 2.7, 0)
-	fill.light_color = Color("#b9d9ff")
-	fill.light_energy = 1.1
+	fill.light_color = Color("#ffffff")
+	fill.light_energy = 0.18
 	fill.omni_range = 12.0
 	add_child(fill)
 
@@ -253,6 +480,67 @@ func _build_map() -> void:
 	_add_box("NorthConsole", Vector3(-2.7, 0.65, -13.5), Vector3(1.1, 1.3, 0.7), Color("#657d88"))
 	_add_box("EastCrate", Vector3(14.5, 0.55, 2.5), Vector3(1.2, 1.1, 1.2), Color("#75634d"))
 	_add_box("SouthTable", Vector3(1.8, 0.8, 13.5), Vector3(2.2, 1.6, 1.0), Color("#4c555d"))
+
+
+	# Molduras finas posicionadas fora do volume útil das passagens.
+	var frame_color := Color("#8da7b5")
+	var frame_dark := Color("#263744")
+	# Ligações norte/sul: vãos com 2,2 m, sem painéis fixos a atravessar a passagem.
+	for z_pos in [-5.0, 5.0]:
+		for x_pos in [-1.18, 1.18]:
+			_add_box("DoorFramePost_%s_%s" % [str(z_pos), str(x_pos)], Vector3(x_pos, 1.35, z_pos), Vector3(0.12, 2.7, 0.18), frame_color)
+		_add_box("DoorFrameHeader_%s" % str(z_pos), Vector3(0, 2.72, z_pos), Vector3(2.48, 0.12, 0.18), frame_color)
+		_add_box("DoorFrameThreshold_%s" % str(z_pos), Vector3(0, 0.025, z_pos), Vector3(2.2, 0.035, 0.30), frame_dark)
+	# Ligação este: moldura rodando 90 graus em torno do eixo vertical.
+	for z_pos in [-1.18, 1.18]:
+		_add_box("DoorFramePostEast_%s" % str(z_pos), Vector3(5.0, 1.35, z_pos), Vector3(0.18, 2.7, 0.12), frame_color)
+	_add_box("DoorFrameHeaderEast", Vector3(5.0, 2.72, 0), Vector3(0.18, 0.12, 2.48), frame_color)
+	_add_box("DoorFrameThresholdEast", Vector3(5.0, 0.025, 0), Vector3(0.30, 0.035, 2.2), frame_dark)
+
+	# Luzes de teto discretas; sem objetos luminosos a bloquear os vãos.
+	_add_detail_box("CeilingLightCentral", Vector3(0, 2.86, 0), Vector3(2.0, 0.045, 0.22), Color("#d6efff"), 0.12)
+	_add_detail_box("CeilingLightNorth", Vector3(0, 2.86, -12), Vector3(2.0, 0.045, 0.22), Color("#d6efff"), 0.12)
+	_add_detail_box("CeilingLightEast", Vector3(12, 2.86, 0), Vector3(0.22, 0.045, 2.0), Color("#d6efff"), 0.12)
+	_add_detail_box("CeilingLightSouth", Vector3(0, 2.86, 12), Vector3(2.0, 0.045, 0.22), Color("#d6efff"), 0.12)
+	_add_detail_box("NorthZoneSign", Vector3(0, 2.45, -4.72), Vector3(1.05, 0.18, 0.04), Color("#214c63"), 0.20)
+	_add_detail_box("EastZoneSign", Vector3(4.72, 2.45, 0), Vector3(0.04, 0.18, 1.05), Color("#214c63"), 0.20)
+	_add_detail_box("SouthZoneSign", Vector3(0, 2.45, 4.72), Vector3(1.05, 0.18, 0.04), Color("#214c63"), 0.20)
+
+	# Acabamentos de instalação: juntas no piso, rodapés técnicos e painéis de parede.
+	var floor_joint := Color("#46535d")
+	var wall_panel := Color("#657581")
+	var wall_shadow := Color("#394957")
+	for x_pos in [-3.0, -1.5, 1.5, 3.0]:
+		_add_detail_box("FloorJointX_%s" % str(x_pos), Vector3(x_pos, 0.008, 0), Vector3(0.018, 0.008, 9.4), floor_joint)
+	for z_pos in [-3.0, -1.5, 1.5, 3.0]:
+		_add_detail_box("FloorJointZ_%s" % str(z_pos), Vector3(0, 0.009, z_pos), Vector3(9.4, 0.008, 0.018), floor_joint)
+	# Painéis pouco profundos na parede oeste; não alteram colisões nem largura dos corredores.
+	for y_pos in [0.55, 1.1, 1.65, 2.2]:
+		_add_detail_box("WestWallPanel_%s" % str(y_pos), Vector3(-4.81, y_pos, 0), Vector3(0.025, 0.36, 8.8), wall_panel)
+	# Faixas técnicas nas paredes laterais, afastadas das aberturas das portas.
+	_add_detail_box("EastUpperWallBand", Vector3(4.81, 2.45, -3.55), Vector3(0.025, 0.10, 2.5), wall_shadow)
+	_add_detail_box("EastLowerWallBand", Vector3(4.81, 2.45, 3.55), Vector3(0.025, 0.10, 2.5), wall_shadow)
+	_add_detail_box("NorthLeftWallBand", Vector3(-3.55, 2.45, -4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("NorthRightWallBand", Vector3(3.55, 2.45, -4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("SouthLeftWallBand", Vector3(-3.55, 2.45, 4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("SouthRightWallBand", Vector3(3.55, 2.45, 4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+
+func _add_detail_box(label: String, pos: Vector3, size: Vector3, color: Color, emission: float = 0.0) -> void:
+	var detail := MeshInstance3D.new()
+	detail.name = label
+	detail.position = pos
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	detail.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.42
+	if emission > 0.0:
+		material.emission_enabled = true
+		material.emission = color
+		material.emission_energy_multiplier = emission
+	detail.material_override = material
+	add_child(detail)
 
 func _add_box(label: String, pos: Vector3, size: Vector3, color: Color) -> void:
 	var body := StaticBody3D.new()
@@ -330,6 +618,6 @@ func _build_hud() -> void:
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(info)
 	var note := Label.new()
-	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Multijogador e IA ainda não integrados neste cenário."
+	note.text = "Mapa de teste: sala central e 3 zonas ligadas. Rede técnica (avatares/portas) em validação. IA da criatura ainda não implementada."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(note)
