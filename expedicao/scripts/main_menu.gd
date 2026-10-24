@@ -136,11 +136,13 @@ func _disconnect_game() -> void:
 
 func _on_peer_connected(_peer_id: int) -> void:
 	_update_players()
-	_set_status("Um jogador entrou na sala.")
+	if multiplayer.is_server():
+		_set_status("Um jogador entrou na sala.")
 
 func _on_peer_disconnected(_peer_id: int) -> void:
 	_update_players()
-	_set_status("Um jogador saiu da sala.")
+	if multiplayer.is_server():
+		_set_status("Um jogador saiu da sala.")
 
 func _on_connected_to_server() -> void:
 	_set_status("Ligação ao anfitrião estabelecida.")
