@@ -143,7 +143,11 @@ func _apply_door_state(door_name: String, is_open: bool) -> void:
 	door.set_meta("open", is_open)
 	door.set_meta("current_yaw", target_rotation.y)
 	if is_instance_valid(_local_player):
-		_local_player.call("_update_door_prompt")
+		var player_prompt := _local_player.get("prompt") as Label
+		if _local_player.get("nearby_door") == door and is_instance_valid(player_prompt):
+			player_prompt.text = "[E] Fechar porta" if is_open else "[E] Abrir porta"
+		else:
+			_local_player.call("_update_door_prompt")
 
 func _ready() -> void:
 	_build_environment()
