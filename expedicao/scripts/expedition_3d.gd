@@ -430,6 +430,8 @@ func _build_environment() -> void:
 	light.rotation_degrees = Vector3(-38, -28, 0)
 	light.light_energy = 0.72
 	light.shadow_enabled = true
+	light.shadow_opacity = 0.55
+	light.shadow_blur = 1.0
 	add_child(light)
 
 	var fill := OmniLight3D.new()

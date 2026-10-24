@@ -563,6 +563,7 @@ func _test_environment_lighting(scene: Node3D) -> void:
 			key_light = child as DirectionalLight3D
 	_check(environment != null and environment.environment != null, "O cenário deve ter um ambiente de renderização configurado")
 	_check(key_light != null and key_light.shadow_enabled, "A luz principal deve projetar sombras para dar profundidade ao cenário")
+	_check(key_light != null and key_light.shadow_opacity < 1.0 and key_light.shadow_blur >= 1.0, "As sombras devem ser suavizadas para evitar contraste excessivamente duro")
 	if key_light != null:
 		_check(key_light.light_energy >= 0.6, "A luz principal deve ter intensidade suficiente para revelar os materiais")
 
