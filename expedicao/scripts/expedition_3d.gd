@@ -26,7 +26,7 @@ func _process(delta: float) -> void:
 		remote_avatar.global_position = remote_avatar.global_position.lerp(target.position, blend)
 		remote_avatar.rotation.y = lerp_angle(remote_avatar.rotation.y, float(target.yaw), blend)
 		var moved_distance := previous_position.distance_to(remote_avatar.global_position)
-		_animate_remote_avatar(int(remote_id), remote_avatar, delta, moved_distance > 0.002)
+		_animate_remote_avatar(int(remote_id), remote_avatar, delta, moved_distance / maxf(delta, 0.0001))
 	if not is_instance_valid(_local_player):
 		return
 	_sync_elapsed += delta
@@ -100,9 +100,10 @@ func _build_remote_avatar(avatar: Node3D) -> void:
 			if animation_player != null:
 				var walk_name := _find_animation_name(animation_player, "walk")
 				var idle_name := _find_animation_name(animation_player, "idle")
-				if not walk_name.is_empty() or not idle_name.is_empty():
+				var run_name := _find_animation_name(animation_player, "run")
+				if not walk_name.is_empty() or not idle_name.is_empty() or not run_name.is_empty():
 					_remote_animation_players[avatar.get_instance_id()] = animation_player
-					_remote_animation_names[avatar.get_instance_id()] = {"walk": walk_name, "idle": idle_name, "current": ""}
+					_remote_animation_names[avatar.get_instance_id()] = {"walk": walk_name, "idle": idle_name, "run": run_name, "current": ""}
 					if not idle_name.is_empty():
 						animation_player.play(idle_name)
 			return
@@ -133,16 +134,24 @@ func _find_skeleton(node: Node) -> Skeleton3D:
 			return found
 	return null
 
-func _animate_remote_avatar(remote_id: int, avatar: Node3D, delta: float, is_moving: bool) -> void:
+func _animate_remote_avatar(remote_id: int, avatar: Node3D, delta: float, movement_speed: float) -> void:
 	var avatar_key := avatar.get_instance_id()
+	var is_moving := movement_speed > 0.04
 	var animation_player := _remote_animation_players.get(avatar_key) as AnimationPlayer
 	if is_instance_valid(animation_player):
 		var names: Dictionary = _remote_animation_names.get(avatar_key, {})
-		var desired := String(names.get("walk", "")) if is_moving else String(names.get("idle", ""))
+		var desired := String(names.get("idle", ""))
+		if is_moving:
+			var run_name := String(names.get("run", ""))
+			var walk_name := String(names.get("walk", ""))
+			desired = run_name if movement_speed >= 3.5 and not run_name.is_empty() else walk_name
+			if desired.is_empty():
+				desired = run_name
 		if desired.is_empty():
-			desired = String(names.get("idle", "")) if is_moving else String(names.get("walk", ""))
+			desired = String(names.get("walk", "")) if not is_moving else String(names.get("idle", ""))
 		if not desired.is_empty() and String(names.get("current", "")) != desired:
-			animation_player.play(desired)
+			# Crossfade curto para evitar cortes bruscos entre repouso e locomoção.
+			animation_player.play(desired, 0.18)
 			names["current"] = desired
 			_remote_animation_names[avatar_key] = names
 		return

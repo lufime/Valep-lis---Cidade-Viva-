@@ -212,14 +212,18 @@ func _test_animation_asset() -> void:
 			var normalized := String(animation_name).to_lower()
 			has_walk = has_walk or normalized.contains("walk")
 			has_idle = has_idle or normalized.contains("idle")
+		var has_run := false
+		for animation_name in names:
+			has_run = has_run or String(animation_name).to_lower().contains("run")
 		_check(has_walk, "O GLB deve conter uma animação de caminhada")
 		_check(has_idle, "O GLB deve conter uma animação de repouso")
+		_check(has_run, "O GLB deve conter uma animação de corrida")
 		if has_walk:
 			for animation_name in names:
 				if String(animation_name).to_lower().contains("walk"):
 					animation_player.play(String(animation_name))
 					break
-			_check(animation_player.is_playing(), "A animação de caminhada deve poder ser iniciada")
+		_check(animation_player.is_playing(), "A animação de caminhada deve poder ser iniciada")
 	model.queue_free()
 	await process_frame
 
@@ -498,6 +502,18 @@ func _test_multiplayer_replication_helpers(scene: Node3D) -> void:
 					stack.append(child)
 			_check(mesh_count >= 3, "O modelo humanoide contém malhas 3D importadas")
 			_check(skeleton_count >= 1, "O modelo humanoide contém um esqueleto")
+		var animation_players := scene.get("_remote_animation_players") as Dictionary
+		var animation_names := scene.get("_remote_animation_names") as Dictionary
+		var animation_player := animation_players.get(avatar.get_instance_id()) as AnimationPlayer
+		if animation_player != null:
+			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 0.0)
+			_check(animation_player.current_animation.to_lower().contains("idle"), "O avatar remoto usa repouso quando está parado")
+			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 1.5)
+			_check(animation_player.current_animation.to_lower().contains("walk"), "O avatar remoto muda para caminhada em movimento normal")
+			scene.call("_animate_remote_avatar", 42, avatar, 0.05, 5.0)
+			_check(animation_player.current_animation.to_lower().contains("run"), "O avatar remoto muda para corrida quando se desloca depressa")
+			_check(animation_player.is_playing(), "A animação de corrida permanece ativa após a transição")
+			_check(animation_names.has(avatar.get_instance_id()), "O estado de animação é guardado por avatar remoto")
 		var initial_position := avatar.global_position
 		scene.call("_apply_remote_position", 42, Vector3(4, 0.1, 5), 1.0, 0.2)
 		_check((scene.get("_remote_targets") as Dictionary).has(42), "A posição recebida fica definida como destino de movimento")
