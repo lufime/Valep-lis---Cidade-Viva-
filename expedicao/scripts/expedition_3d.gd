@@ -498,6 +498,25 @@ func _build_map() -> void:
 	_add_detail_box("EastZoneSign", Vector3(4.72, 2.45, 0), Vector3(0.04, 0.18, 1.05), Color("#214c63"), 0.20)
 	_add_detail_box("SouthZoneSign", Vector3(0, 2.45, 4.72), Vector3(1.05, 0.18, 0.04), Color("#214c63"), 0.20)
 
+	# Acabamentos de instalação: juntas no piso, rodapés técnicos e painéis de parede.
+	var floor_joint := Color("#46535d")
+	var wall_panel := Color("#657581")
+	var wall_shadow := Color("#394957")
+	for x_pos in [-3.0, -1.5, 1.5, 3.0]:
+		_add_detail_box("FloorJointX_%s" % str(x_pos), Vector3(x_pos, 0.008, 0), Vector3(0.018, 0.008, 9.4), floor_joint)
+	for z_pos in [-3.0, -1.5, 1.5, 3.0]:
+		_add_detail_box("FloorJointZ_%s" % str(z_pos), Vector3(0, 0.009, z_pos), Vector3(9.4, 0.008, 0.018), floor_joint)
+	# Painéis pouco profundos na parede oeste; não alteram colisões nem largura dos corredores.
+	for y_pos in [0.55, 1.1, 1.65, 2.2]:
+		_add_detail_box("WestWallPanel_%s" % str(y_pos), Vector3(-4.81, y_pos, 0), Vector3(0.025, 0.36, 8.8), wall_panel)
+	# Faixas técnicas nas paredes laterais, afastadas das aberturas das portas.
+	_add_detail_box("EastUpperWallBand", Vector3(4.81, 2.45, -3.55), Vector3(0.025, 0.10, 2.5), wall_shadow)
+	_add_detail_box("EastLowerWallBand", Vector3(4.81, 2.45, 3.55), Vector3(0.025, 0.10, 2.5), wall_shadow)
+	_add_detail_box("NorthLeftWallBand", Vector3(-3.55, 2.45, -4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("NorthRightWallBand", Vector3(3.55, 2.45, -4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("SouthLeftWallBand", Vector3(-3.55, 2.45, 4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+	_add_detail_box("SouthRightWallBand", Vector3(3.55, 2.45, 4.81), Vector3(2.5, 0.10, 0.025), wall_shadow)
+
 func _add_detail_box(label: String, pos: Vector3, size: Vector3, color: Color, emission: float = 0.0) -> void:
 	var detail := MeshInstance3D.new()
 	detail.name = label
