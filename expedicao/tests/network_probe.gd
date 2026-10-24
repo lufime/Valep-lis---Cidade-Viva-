@@ -234,10 +234,10 @@ func _watch_server_replication() -> void:
 										if disconnected_peer_id != target_peer_id:
 											_fail("O anfitrião não detetou a desconexão real do cliente.")
 											return
-										var final_states: Dictionary = expedition.get("_player_states")
+										var cleanup_states: Dictionary = expedition.get("_player_states")
 										var remote_players: Dictionary = expedition.get("_remote_players")
 										var remote_targets: Dictionary = expedition.get("_remote_targets")
-										if final_states.has(target_peer_id) or remote_players.has(target_peer_id) or remote_targets.has(target_peer_id):
+										if cleanup_states.has(target_peer_id) or remote_players.has(target_peer_id) or remote_targets.has(target_peer_id):
 											_fail("O anfitrião manteve estado/avatar fantasma após a desconexão.")
 											return
 										print("SERVER_DISCONNECT_CLEANUP_PASS | O anfitrião removeu avatar e estado após a saída real do cliente")
