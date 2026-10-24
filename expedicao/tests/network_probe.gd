@@ -115,7 +115,6 @@ func _on_connected_to_server() -> void:
 	if test_door == null:
 		_fail("A porta norte não existe no cliente.")
 		return
-	var local_player := expedition.get_node_or_null("LocalPlayer") as CharacterBody3D
 	if local_player == null:
 		_fail("O jogador local do cliente não existe para o teste de autorização da porta.")
 		return
